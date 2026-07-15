@@ -21,6 +21,10 @@ if ! command -v uv &>/dev/null; then
   echo "ERROR: 'uv' not found. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
   exit 1
 fi
+if ! command -v rustc &>/dev/null; then
+  echo "ERROR: 'rustc' not found. Install it with: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Python venv
