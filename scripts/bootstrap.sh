@@ -68,13 +68,17 @@ fi
 echo "==> Python: $("$VENV_DIR/bin/python" --version)"
 
 # ---------------------------------------------------------------------------
+# Build-environment Python packages
+# ---------------------------------------------------------------------------
+echo "==> Installing build-environment packages"
+uv pip install pip 'maturin[patchelf]' pandas pre-commit
+
+# ---------------------------------------------------------------------------
 # Dev tooling
 # ---------------------------------------------------------------------------
-echo "==> Installing pre-commit"
-uv pip install pre-commit
-
 VLLM_DIR="$WORKSPACE_ROOT/vllm"
 if [[ -d "$VLLM_DIR" ]]; then
+  echo "==> Installing pre-commit hooks"
   "$VENV_DIR/bin/pre-commit" install --work-tree "$VLLM_DIR" --git-dir "$VLLM_DIR/.git"
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping pre-commit install" >&2

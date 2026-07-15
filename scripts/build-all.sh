@@ -4,7 +4,7 @@
 # Dynamo must be installed before vLLM: the Dynamo [vllm] extras would
 # otherwise overwrite the editable vLLM installation.
 #
-# Run bootstrap.sh first to create the venv.
+# Run bootstrap.sh first to create the venv and install build tools.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,8 +22,6 @@ fi
 DYNAMO_DIR="$WORKSPACE_ROOT/dynamo"
 if [[ -d "$DYNAMO_DIR" ]]; then
   echo "==> Building and installing Dynamo"
-
-  uv pip install pip 'maturin[patchelf]'
 
   pushd "$DYNAMO_DIR/lib/bindings/python" >/dev/null
   maturin develop --uv
@@ -43,8 +41,6 @@ fi
 VLLM_DIR="$WORKSPACE_ROOT/vllm"
 if [[ -d "$VLLM_DIR" ]]; then
   echo "==> Building and installing vLLM"
-
-  uv pip install pip pandas
 
   pushd "$VLLM_DIR" >/dev/null
   VLLM_USE_PRECOMPILED=1 uv pip install --editable . --torch-backend=auto
