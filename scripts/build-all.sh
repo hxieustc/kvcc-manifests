@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# build-all.sh — build all components in dependency order
+# build-all.sh — build and install Dynamo then vLLM into the workspace venv
+#
+# Dynamo must be installed before vLLM: the Dynamo [vllm] extras would
+# otherwise overwrite the editable vLLM installation.
+#
+# Run bootstrap.sh first to create the venv.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,27 +16,43 @@ if [[ ! -d "$VENV_DIR" ]]; then
   exit 1
 fi
 
-PYTHON="$VENV_DIR/bin/python"
+# ---------------------------------------------------------------------------
+# 1. Dynamo (must come before vLLM)
+# ---------------------------------------------------------------------------
+DYNAMO_DIR="$WORKSPACE_ROOT/dynamo"
+if [[ -d "$DYNAMO_DIR" ]]; then
+  echo "==> Building and installing Dynamo"
 
-# ---------------------------------------------------------------------------
-# 1. Build Dynamo (Rust + Python)
-# ---------------------------------------------------------------------------
-if [[ -d "$WORKSPACE_ROOT/dynamo" ]]; then
-  echo "==> Building Dynamo"
-  # TODO: replace with the correct Dynamo build command (e.g. cargo build --release)
-  pushd "$WORKSPACE_ROOT/dynamo" >/dev/null
-  # cargo build --release
+  uv pip install pip 'maturin[patchelf]'
+
+  pushd "$DYNAMO_DIR/lib/bindings/python" >/dev/null
+  maturin develop --uv
   popd >/dev/null
+
+  pushd "$DYNAMO_DIR" >/dev/null
+  uv pip install -e .
+  uv pip install -e '.[vllm]'
+  popd >/dev/null
+else
+  echo "WARNING: dynamo directory not found at $DYNAMO_DIR — skipping" >&2
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Build vLLM (C/C++ extensions)
+# 2. vLLM (after Dynamo so editable install is not overwritten)
 # ---------------------------------------------------------------------------
-if [[ -d "$WORKSPACE_ROOT/vllm" ]]; then
-  echo "==> Building vLLM"
-  pushd "$WORKSPACE_ROOT/vllm" >/dev/null
-  "$VENV_DIR/bin/pip" install -e . --torch-backend=auto
+VLLM_DIR="$WORKSPACE_ROOT/vllm"
+if [[ -d "$VLLM_DIR" ]]; then
+  echo "==> Building and installing vLLM"
+
+  uv pip install pip pandas
+
+  pushd "$VLLM_DIR" >/dev/null
+  VLLM_USE_PRECOMPILED=1 uv pip install --editable . --torch-backend=auto
   popd >/dev/null
+else
+  echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
 fi
 
-echo "==> Build complete"
+echo ""
+echo "==> Build complete. Activate the venv with:"
+echo "    source $VENV_DIR/bin/activate"

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# bootstrap.sh — initialise the repo workspace and install dependencies
+# bootstrap.sh — verify prerequisites and create the Python venv
 #
-# Install order matters: Dynamo must be installed before vLLM because
-# the Dynamo install would otherwise overwrite the editable vLLM installation.
+# Run this once after `repo sync`. Then run build-all.sh to build and install
+# Dynamo and vLLM into the venv.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,57 +37,19 @@ fi
 
 echo "==> Python: $("$VENV_DIR/bin/python" --version)"
 
-# Run all uv pip commands inside the venv without activating the shell
-UV="uv"
-UV_PIP="$UV pip"
-
 # ---------------------------------------------------------------------------
-# 1. Dynamo (must come before vLLM)
-# ---------------------------------------------------------------------------
-DYNAMO_DIR="$WORKSPACE_ROOT/dynamo"
-if [[ -d "$DYNAMO_DIR" ]]; then
-  echo "==> Building and installing Dynamo"
-
-  # Bootstrap pip and maturin inside the venv
-  "$UV_PIP" install pip 'maturin[patchelf]'
-
-  # Build the Rust Python bindings
-  pushd "$DYNAMO_DIR/lib/bindings/python" >/dev/null
-  maturin develop --uv
-  popd >/dev/null
-
-  # Install Dynamo core and the vLLM extras
-  pushd "$DYNAMO_DIR" >/dev/null
-  "$UV_PIP" install -e .
-  "$UV_PIP" install -e '.[vllm]'
-  popd >/dev/null
-else
-  echo "WARNING: dynamo directory not found at $DYNAMO_DIR — skipping" >&2
-fi
-
-# ---------------------------------------------------------------------------
-# 2. vLLM (after Dynamo so it wins the editable-install race)
-# ---------------------------------------------------------------------------
-VLLM_DIR="$WORKSPACE_ROOT/vllm"
-if [[ -d "$VLLM_DIR" ]]; then
-  echo "==> Building and installing vLLM"
-  "$UV_PIP" install pip pandas
-  pushd "$VLLM_DIR" >/dev/null
-  VLLM_USE_PRECOMPILED=1 "$UV_PIP" install --editable . --torch-backend=auto
-  popd >/dev/null
-else
-  echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
-fi
-
-# ---------------------------------------------------------------------------
-# 3. Dev tooling
+# Dev tooling
 # ---------------------------------------------------------------------------
 echo "==> Installing pre-commit"
-"$UV_PIP" install pre-commit
-pushd "$VLLM_DIR" >/dev/null
-"$VENV_DIR/bin/pre-commit" install
-popd >/dev/null
+uv pip install pre-commit
+
+VLLM_DIR="$WORKSPACE_ROOT/vllm"
+if [[ -d "$VLLM_DIR" ]]; then
+  "$VENV_DIR/bin/pre-commit" install --work-tree "$VLLM_DIR" --git-dir "$VLLM_DIR/.git"
+else
+  echo "WARNING: vllm directory not found at $VLLM_DIR — skipping pre-commit install" >&2
+fi
 
 echo ""
-echo "==> Bootstrap complete. Activate the venv with:"
-echo "    source $VENV_DIR/bin/activate"
+echo "==> Bootstrap complete. Next step:"
+echo "    bash $SCRIPT_DIR/build-all.sh"
