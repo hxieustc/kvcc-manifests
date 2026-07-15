@@ -1,0 +1,60 @@
+name: KVCC Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    paths:
+      - "manifests/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+  workflow_dispatch:
+    inputs:
+      manifest:
+        description: "Manifest file to sync (relative to repo root)"
+        required: false
+        default: "manifests/develop.xml"
+
+jobs:
+  validate-manifests:
+    name: Validate manifest XML
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check XML is well-formed
+        run: |
+          for f in manifests/*.xml default.xml; do
+            echo "Checking $f"
+            xmllint --noout "$f"
+          done
+
+  # ---------------------------------------------------------------------------
+  # GPU integration test — requires a self-hosted runner with GPUs and
+  # the full Dynamo + NIXL + vLLM environment pre-installed.
+  # ---------------------------------------------------------------------------
+  kvcc-e2e:
+    name: KVCC E2E (GPU)
+    runs-on: [self-hosted, gpu]
+    # TODO: remove the `if: false` guard once a self-hosted GPU runner is
+    # registered and the workspace bootstrap is in place.
+    if: false
+    steps:
+      - name: Sync workspace
+        run: |
+          MANIFEST="${{ github.event.inputs.manifest || 'manifests/develop.xml' }}"
+          repo init -u git@github.com:hxieustc/kvcc-manifests.git -m "$MANIFEST"
+          repo sync -j4
+
+      - name: Bootstrap
+        run: bash scripts/bootstrap.sh
+
+      - name: Build
+        run: bash scripts/build-all.sh
+
+      - name: Test
+        env:
+          KVCC_TEST_GPUS: "0,1"
+          KVCC_RUN_E2E: "1"
+        run: bash scripts/test-all.sh

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  develop.xml — active development manifest
+  Tracks the working branches for the Dynamo router and vLLM KVCC integration.
+
+  Usage:
+    repo init -u git@github.com:hxieustc/kvcc-manifests.git -m manifests/develop.xml
+    repo sync
+-->
+<manifest>
+  <remote name="github" fetch="git@github.com:" />
+  <default remote="github" sync-j="4" />
+
+  <!-- Dynamo runtime and KV router (router_hints branch) -->
+  <project name="ai-dynamo/dynamo"
+           path="dynamo"
+           revision="oandreeva/router_hints" />
+
+  <!-- vLLM with KVCC secondary-tier support -->
+  <project name="mkhazraee/vllm-priv"
+           path="vllm"
+           revision="kvcc_main" />
+
+</manifest>
