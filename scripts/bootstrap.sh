@@ -11,7 +11,37 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 echo "==> Workspace: $WORKSPACE_ROOT"
 
 # ---------------------------------------------------------------------------
-# Verify prerequisites
+# System dev libraries (apt)
+# ---------------------------------------------------------------------------
+APT_PACKAGES=(
+  build-essential
+  libhwloc-dev
+  libudev-dev
+  pkg-config
+  libclang-dev
+  protobuf-compiler
+  python3-dev
+  cmake
+)
+
+missing_pkgs=()
+for pkg in "${APT_PACKAGES[@]}"; do
+  if ! dpkg -s "$pkg" &>/dev/null; then
+    missing_pkgs+=("$pkg")
+  fi
+done
+
+if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
+  echo "ERROR: missing system packages: ${missing_pkgs[*]}" >&2
+  echo "       Install with:" >&2
+  echo "       sudo apt-get install -y ${missing_pkgs[*]}" >&2
+  exit 1
+fi
+
+echo "==> System dev libraries: OK"
+
+# ---------------------------------------------------------------------------
+# CLI tools
 # ---------------------------------------------------------------------------
 if ! command -v repo &>/dev/null; then
   echo "ERROR: 'repo' not found. Install it from https://source.android.com/setup/develop/repo" >&2
