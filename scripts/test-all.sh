@@ -14,7 +14,7 @@ fi
 PYTHON="$VENV_DIR/bin/python"
 
 # Options (override via env)
-GPUS="${KVCC_TEST_GPUS:-2,3}"
+GPUS="${KVCC_TEST_GPUS:-0,1}"
 KVCC_E2E_TEST="${KVCC_RUN_E2E:-1}"
 
 FAILED=0
