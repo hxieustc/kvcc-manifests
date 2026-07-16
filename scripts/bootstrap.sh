@@ -6,7 +6,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# scripts/ is at manifests/scripts/ inside the workspace; go up two levels
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "==> Workspace: $WORKSPACE_ROOT"
 
@@ -65,7 +66,12 @@ if [[ ! -d "$VENV_DIR" ]]; then
   uv venv --python 3.12 "$VENV_DIR"
 fi
 
-echo "==> Python: $("$VENV_DIR/bin/python" --version)"
+# Explicitly target the workspace venv for all subsequent uv pip calls,
+# overriding any venv that may already be active in the caller's shell.
+export VIRTUAL_ENV="$VENV_DIR"
+export PATH="$VENV_DIR/bin:$PATH"
+
+echo "==> Python: $(python --version)"
 
 # ---------------------------------------------------------------------------
 # Build-environment Python packages
@@ -79,7 +85,7 @@ uv pip install pip 'maturin[patchelf]' pandas pre-commit
 VLLM_DIR="$WORKSPACE_ROOT/vllm"
 if [[ -d "$VLLM_DIR" ]]; then
   echo "==> Installing pre-commit hooks"
-  "$VENV_DIR/bin/pre-commit" install --work-tree "$VLLM_DIR" --git-dir "$VLLM_DIR/.git"
+  pre-commit install --work-tree "$VLLM_DIR" --git-dir "$VLLM_DIR/.git"
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping pre-commit install" >&2
 fi

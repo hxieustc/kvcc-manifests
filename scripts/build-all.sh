@@ -8,13 +8,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# scripts/ is at manifests/scripts/ inside the workspace; go up two levels
+WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_DIR="$WORKSPACE_ROOT/.venv"
 
 if [[ ! -d "$VENV_DIR" ]]; then
-  echo "ERROR: venv not found — run scripts/bootstrap.sh first" >&2
+  echo "ERROR: venv not found — run manifests/scripts/bootstrap.sh first" >&2
   exit 1
 fi
+
+# Explicitly target the workspace venv for all subsequent uv pip / maturin
+# calls, overriding any venv that may already be active in the caller's shell.
+export VIRTUAL_ENV="$VENV_DIR"
+export PATH="$VENV_DIR/bin:$PATH"
 
 # ---------------------------------------------------------------------------
 # 1. Dynamo (must come before vLLM)
