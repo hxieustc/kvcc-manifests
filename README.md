@@ -40,7 +40,7 @@ repo sync -j8
 ### 3. Bootstrap the build environment
 
 ```bash
-bash scripts/bootstrap.sh
+bash manifests/scripts/bootstrap.sh
 ```
 
 This checks prerequisites, creates `.venv` with Python 3.12, installs
@@ -58,7 +58,7 @@ export CUDARC_CUDA_VERSION=13000
 Then build:
 
 ```bash
-bash scripts/build-all.sh
+bash manifests/scripts/build-all.sh
 ```
 
 This installs Dynamo (Rust bindings via `maturin` + Python packages) first,
@@ -75,7 +75,7 @@ python -m pytest vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_config.py \
                  vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py -q
 
 # Full GPU end-to-end test
-bash scripts/test-all.sh
+bash manifests/scripts/test-all.sh
 ```
 
 ### 6. Day-to-day development
@@ -92,7 +92,7 @@ cd dynamo/lib/bindings/python && maturin develop --uv && cd -
 # (vLLM Python-only change — editable install, no rebuild needed)
 
 # Run tests
-bash scripts/test-all.sh
+bash manifests/scripts/test-all.sh
 ```
 
 ---
@@ -174,17 +174,19 @@ Pin exact SHAs in `locked/` for reproducible builds.
 
 | Script | Purpose |
 |---|---|
-| `scripts/bootstrap.sh` | Prereq checks, venv creation, build-tool pip installs, pre-commit |
-| `scripts/build-all.sh` | Build Dynamo (Rust + Python) then vLLM (editable) |
-| `scripts/test-all.sh` | Run unit tests and KVCC E2E GPU test |
+| `manifests/scripts/bootstrap.sh` | Prereq checks, venv creation, build-tool pip installs, pre-commit |
+| `manifests/scripts/build-all.sh` | Build Dynamo (Rust + Python) then vLLM (editable) |
+| `manifests/scripts/test-all.sh` | Run unit tests and KVCC E2E GPU test |
 
 Override GPU indices and E2E toggle via environment variables:
 
 ```bash
-KVCC_TEST_GPUS=2,3 KVCC_RUN_E2E=1 bash scripts/test-all.sh
+KVCC_TEST_GPUS=2,3 KVCC_RUN_E2E=1 bash manifests/scripts/test-all.sh
 ```
 
 ## Repository layout
+
+**Manifest repo** (`kvcc-manifests`):
 
 ```
 kvcc-manifests/
@@ -199,4 +201,20 @@ kvcc-manifests/
 └── .github/
     └── workflows/
         └── integration.yml  ← CI (manifest validation + GPU E2E skeleton)
+```
+
+**Synced workspace** (`kvcc-workspace/`):
+
+```
+kvcc-workspace/
+├── manifests/               ← kvcc-manifests repo (synced so scripts are accessible)
+│   ├── scripts/
+│   │   ├── bootstrap.sh
+│   │   ├── build-all.sh
+│   │   └── test-all.sh
+│   └── manifests/
+│       └── develop.xml
+├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
+├── vllm/                    ← mkhazraee/vllm-priv @ moein/kvcc_main
+└── .venv/                   ← created by bootstrap.sh
 ```

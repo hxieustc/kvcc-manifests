@@ -11,6 +11,11 @@
   <remote name="github" fetch="ssh://git@github.com" />
   <default remote="github" sync-j="4" />
 
+  <!-- Manifest repo — synced so scripts/ and locked/ are available in workspace -->
+  <project name="hxieustc/kvcc-manifests"
+           path="manifests"
+           revision="develop" />
+
   <!-- Dynamo runtime and KV router (router_hints branch) -->
   <project name="ai-dynamo/dynamo"
            path="dynamo"
