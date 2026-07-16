@@ -50,6 +50,7 @@ if [[ -d "$VLLM_DIR" ]]; then
 
   pushd "$VLLM_DIR" >/dev/null
   VLLM_USE_PRECOMPILED=1 uv pip install --editable . --torch-backend=auto
+  uv pip install -r requirements/test/cuda.in
   popd >/dev/null
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
