@@ -85,7 +85,9 @@ uv pip install pip 'maturin[patchelf]' pandas pre-commit
 VLLM_DIR="$WORKSPACE_ROOT/vllm"
 if [[ -d "$VLLM_DIR" ]]; then
   echo "==> Installing pre-commit hooks"
-  pre-commit install --work-tree "$VLLM_DIR" --git-dir "$VLLM_DIR/.git"
+  pushd "$VLLM_DIR" >/dev/null
+  pre-commit install
+  popd >/dev/null
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping pre-commit install" >&2
 fi
