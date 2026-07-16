@@ -8,7 +8,7 @@
     repo sync
 -->
 <manifest>
-  <remote name="github" fetch="git@github.com:" />
+  <remote name="github" fetch="ssh://git@github.com" />
   <default remote="github" sync-j="4" />
 
   <!-- Dynamo runtime and KV router (router_hints branch) -->
