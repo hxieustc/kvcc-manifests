@@ -77,7 +77,7 @@ echo "==> Python: $(python --version)"
 # Build-environment Python packages
 # ---------------------------------------------------------------------------
 echo "==> Installing build-environment packages"
-uv pip install pip 'maturin[patchelf]' pandas pre-commit
+uv pip install pip 'maturin[patchelf]' pandas pre-commit pytest
 
 # ---------------------------------------------------------------------------
 # Dev tooling
