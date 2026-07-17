@@ -26,7 +26,7 @@ source "$HOME/.cargo/env"
 # System dev libraries
 sudo apt-get install -y \
   build-essential libhwloc-dev libudev-dev pkg-config \
-  libclang-dev protobuf-compiler python3-dev cmake
+  libclang-dev protobuf-compiler python3-dev cmake git-lfs less git jq curl
 ```
 
 ### 2. Create workspace and sync sources
