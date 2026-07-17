@@ -80,6 +80,12 @@ echo "==> Installing build-environment packages"
 uv pip install pip 'maturin[patchelf]' pandas pre-commit pytest
 
 # ---------------------------------------------------------------------------
+# NIXL
+# ---------------------------------------------------------------------------
+echo "==> Installing NIXL"
+uv pip install pip nixl
+
+# ---------------------------------------------------------------------------
 # Dev tooling
 # ---------------------------------------------------------------------------
 VLLM_DIR="$WORKSPACE_ROOT/vllm"
