@@ -31,6 +31,22 @@ sudo apt-get install -y \
 
 ### 2. Create workspace and sync sources
 
+1. set up github token access for the private repo `vllm-priv`
+
+The `vllm-priv` repo is a private repo as of now, you can create a GITHUB PAT to access it (provided
+that you already join the repo as a collaborator). 
+
+Suppose that you have already created such a GITHUB token, and GITHUB_USER, GITHUB_EMAIL, GITHUB_TOKEN are your GITHUB user, email, and PAT.
+Run the following to set the token for accessing GITHUB:
+
+```bash
+git config --global credential.https://github.com/.username "$GITHUB_USER"
+git config --global credential.https://github.com/.email "$GITHUB_EMAIL"
+git config --global http.https://github.com/.extraHeader "Authorization: Basic $(echo -n "$GITHUB_USER:$GITHUB_TOKEN" | base64)"
+```
+
+2. repo sync from sources
+ 
 ```bash
 mkdir kvcc-workspace && cd kvcc-workspace
 repo init -u https://github.com/hxieustc/kvcc-manifests.git -m manifests/develop.xml
