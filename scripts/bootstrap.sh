@@ -23,6 +23,11 @@ APT_PACKAGES=(
   protobuf-compiler
   python3-dev
   cmake
+  git-lfs
+  git
+  less
+  jq
+  curl
 )
 
 missing_pkgs=()
