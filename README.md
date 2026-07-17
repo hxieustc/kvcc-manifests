@@ -33,7 +33,7 @@ sudo apt-get install -y \
 
 ```bash
 mkdir kvcc-workspace && cd kvcc-workspace
-repo init -u git@github.com:hxieustc/kvcc-manifests.git -m manifests/develop.xml
+repo init -u https://github.com/hxieustc/kvcc-manifests.git -m manifests/develop.xml
 repo sync -j8
 ```
 
