@@ -4,11 +4,11 @@
   Tracks the working branches for the Dynamo router and vLLM KVCC integration.
 
   Usage:
-    repo init -u git@github.com:hxieustc/kvcc-manifests.git -m manifests/develop.xml
+    repo init -u https://github.com/hxieustc/kvcc-manifests.git -m manifests/develop.xml
     repo sync
 -->
 <manifest>
-  <remote name="github" fetch="ssh://git@github.com" />
+  <remote name="github" fetch="https://github.com" />
   <default remote="github" sync-j="4" />
 
   <!-- Manifest repo — synced so scripts/ and locked/ are available in workspace -->
