@@ -52,6 +52,13 @@ if [[ -d "$VLLM_DIR" ]]; then
   VLLM_USE_PRECOMPILED=1 uv pip install --editable . --torch-backend=auto
   uv pip install -r requirements/test/cuda.in
   popd >/dev/null
+
+  # dynamo[vllm] pulls vllm==0.24.0 which pins flashinfer-cubin==0.6.12 (PyPI).
+  # The vllm editable install then upgrades flashinfer-python to 0.6.14 but
+  # setup.py deliberately skips flashinfer-cubin (not on PyPI since 0.6.14).
+  # Re-pin cubin from flashinfer.ai to match python.
+  FI_VER=$(python3 -c "import importlib.metadata as m; print(m.version('flashinfer-python'))")
+  uv pip install "flashinfer-cubin==${FI_VER}" --extra-index-url https://flashinfer.ai/whl/
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
 fi
