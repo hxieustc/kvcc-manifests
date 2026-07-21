@@ -24,6 +24,6 @@
   <!-- vLLM with KVCC secondary-tier support -->
   <project name="mkhazraee/vllm-priv"
            path="vllm"
-           revision="moein/kvcc_main" />
+           revision="moein/prog_thread_opt2" />
 
 </manifest>
