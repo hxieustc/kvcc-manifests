@@ -1,8 +1,9 @@
 # kvcc-manifests
 
 Google Repo manifest repository for the KVCC KV-cache secondary-tier project.
-Tracks the [Dynamo](https://github.com/ai-dynamo/dynamo) router and
-[vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches.
+Tracks the [Dynamo](https://github.com/ai-dynamo/dynamo) router,
+[vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches, and
+the [KVCC](https://github.com/NVIDIA-dev/kvcc) secondary-tier implementation.
 
 ## Quick start — full dev cycle from scratch
 
@@ -62,7 +63,7 @@ bash manifests/scripts/bootstrap.sh
 This checks prerequisites, creates `.venv` with Python 3.12, installs
 `maturin`, `pandas`, `pre-commit`, and hooks pre-commit into the vLLM repo.
 
-### 4. Build and install Dynamo and vLLM
+### 4. Build and install Dynamo, vLLM, and KVCC
 
 If your CUDA version is **13.0 or newer**, set this before building — the
 `cudarc` Rust crate requires it:
@@ -78,8 +79,10 @@ bash manifests/scripts/build-all.sh
 ```
 
 This installs Dynamo (Rust bindings via `maturin` + Python packages) first,
-then vLLM (pre-compiled wheel, editable install). Order matters: Dynamo's
-`[vllm]` extras would overwrite the editable vLLM install if built second.
+then vLLM (pre-compiled wheel, editable install), then KVCC (editable install
+into the workspace venv). Order matters: Dynamo's `[vllm]` extras would
+overwrite the editable vLLM install if built second; KVCC must come after vLLM
+so the `nvidia-kvcc` package lands in the same environment.
 
 ### 5. Activate the venv and run tests
 
@@ -87,8 +90,10 @@ then vLLM (pre-compiled wheel, editable install). Order matters: Dynamo's
 source .venv/bin/activate
 
 # CPU-only unit tests (no GPU required)
+python -m pytest kvcc/tests/ -q
 python -m pytest vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_config.py \
-                 vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py -q
+                 vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py \
+                 vllm/tests/v1/kv_offload/tiering/test_kvcc_tier.py -q
 
 # Full GPU end-to-end test
 bash manifests/scripts/test-all.sh
@@ -181,7 +186,7 @@ repo manifest -r -o locked/develop-$(date +%Y.%m.%d).lock.xml
 | File | Purpose |
 |---|---|
 | `default.xml` | Alias — includes `manifests/develop.xml` |
-| `manifests/develop.xml` | Active development branches (dynamo + vllm) |
+| `manifests/develop.xml` | Active development branches (dynamo + vllm + kvcc) |
 
 Add new manifests under `manifests/` (e.g. `manifests/release-YYYY.MM.xml`).
 Pin exact SHAs in `locked/` for reproducible builds.
@@ -191,8 +196,8 @@ Pin exact SHAs in `locked/` for reproducible builds.
 | Script | Purpose |
 |---|---|
 | `manifests/scripts/bootstrap.sh` | Prereq checks, venv creation, build-tool pip installs, pre-commit |
-| `manifests/scripts/build-all.sh` | Build Dynamo (Rust + Python) then vLLM (editable) |
-| `manifests/scripts/test-all.sh` | Run unit tests and KVCC E2E GPU test |
+| `manifests/scripts/build-all.sh` | Build Dynamo (Rust + Python), then vLLM (editable), then KVCC (editable) |
+| `manifests/scripts/test-all.sh` | Run KVCC unit tests, vLLM KVCC tests, and E2E GPU test |
 
 Override GPU indices and E2E toggle via environment variables:
 
@@ -231,6 +236,7 @@ kvcc-workspace/
 │   └── manifests/
 │       └── develop.xml
 ├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
-├── vllm/                    ← mkhazraee/vllm-priv @ moein/kvcc_main
+├── vllm/                    ← mkhazraee/vllm-priv @ kvcc_repo
+├── kvcc/                    ← NVIDIA-dev/kvcc @ main (via SSH)
 └── .venv/                   ← created by bootstrap.sh
 ```
