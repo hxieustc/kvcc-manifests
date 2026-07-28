@@ -1,13 +1,31 @@
 # kvcc-manifests
 
-Google Repo manifest repository for the KVCC KV-cache secondary-tier project.
-Tracks the [Dynamo](https://github.com/ai-dynamo/dynamo) router,
-[vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches, and
-the [KVCC](https://github.com/NVIDIA-dev/kvcc) secondary-tier implementation.
+Google Repo manifest repository for KVCC development and tests, which tracks
+
+- the [Dynamo](https://github.com/ai-dynamo/dynamo) router,
+- [vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches, and
+- the [KVCC](https://github.com/NVIDIA-dev/kvcc) secondary-tier implementation.
+
+**Synced workspace** (`kvcc-workspace/`):
+
+```
+kvcc-workspace/
+├── manifests/               ← kvcc-manifests repo (synced so scripts are accessible)
+│   ├── scripts/
+│   │   ├── bootstrap.sh
+│   │   ├── build-all.sh
+│   │   └── test-all.sh
+│   └── manifests/
+│       └── develop.xml
+├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
+├── vllm/                    ← mkhazraee/vllm-priv @ kvcc_repo
+├── kvcc/                    ← NVIDIA-dev/kvcc @ main (via SSH)
+└── .venv/                   ← created by bootstrap.sh
+```
 
 ## Quick start — full dev cycle from scratch
 
-### 1. Install system tools
+### 1. Install system tools (skip if already installed)
 
 ```bash
 # Google repo tool
@@ -78,9 +96,13 @@ Then build:
 bash manifests/scripts/build-all.sh
 ```
 
-This installs Dynamo (Rust bindings via `maturin` + Python packages) first,
-then vLLM (pre-compiled wheel, editable install), then KVCC (editable install
-into the workspace venv). Order matters: Dynamo's `[vllm]` extras would
+This installs 
+
+1. Dynamo (Rust bindings via `maturin` + Python packages) first,
+2. vLLM (pre-compiled wheel, editable install), 
+3. KVCC (editable install into the workspace venv). 
+
+Order matters: Dynamo's `[vllm]` extras would
 overwrite the editable vLLM install if built second; KVCC must come after vLLM
 so the `nvidia-kvcc` package lands in the same environment.
 
@@ -224,19 +246,3 @@ kvcc-manifests/
         └── integration.yml  ← CI (manifest validation + GPU E2E skeleton)
 ```
 
-**Synced workspace** (`kvcc-workspace/`):
-
-```
-kvcc-workspace/
-├── manifests/               ← kvcc-manifests repo (synced so scripts are accessible)
-│   ├── scripts/
-│   │   ├── bootstrap.sh
-│   │   ├── build-all.sh
-│   │   └── test-all.sh
-│   └── manifests/
-│       └── develop.xml
-├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
-├── vllm/                    ← mkhazraee/vllm-priv @ kvcc_repo
-├── kvcc/                    ← NVIDIA-dev/kvcc @ main (via SSH)
-└── .venv/                   ← created by bootstrap.sh
-```
