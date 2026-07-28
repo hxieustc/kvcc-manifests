@@ -49,7 +49,10 @@ if [[ -d "$VLLM_DIR" ]]; then
   echo "==> Building and installing vLLM"
 
   pushd "$VLLM_DIR" >/dev/null
-  VLLM_USE_PRECOMPILED=1 uv pip install --editable . --torch-backend=auto
+  # kvcc_p2p branch tag can't be parsed as semver by setuptools-scm; pin a
+  # dummy version so the build doesn't fail on version resolution.
+  VLLM_USE_PRECOMPILED=1 SETUPTOOLS_SCM_PRETEND_VERSION=0.1.3 \
+    uv pip install --editable . --torch-backend=auto
   uv pip install -r requirements/test/cuda.in
   popd >/dev/null
 
@@ -61,6 +64,19 @@ if [[ -d "$VLLM_DIR" ]]; then
   uv pip install "flashinfer-cubin==${FI_VER}" --extra-index-url https://flashinfer.ai/whl/
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
+fi
+
+# ---------------------------------------------------------------------------
+# 3. KVCC (install into workspace venv, editable, after vLLM)
+# ---------------------------------------------------------------------------
+KVCC_DIR="$WORKSPACE_ROOT/kvcc"
+if [[ -d "$KVCC_DIR" ]]; then
+  echo "==> Installing KVCC (editable) into venv"
+  pushd "$KVCC_DIR" >/dev/null
+  uv pip install --python "$VENV_DIR/bin/python" --editable .
+  popd >/dev/null
+else
+  echo "WARNING: kvcc directory not found at $KVCC_DIR — skipping" >&2
 fi
 
 echo ""
