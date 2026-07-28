@@ -56,6 +56,18 @@ if [[ -d "$VLLM_DIR" ]]; then
   uv pip install -r requirements/test/cuda.in
   popd >/dev/null
 
+  # vllm/requirements/cuda.txt pins torch==2.11.0, but the precompiled FA2/FA3
+  # CUDA extensions in the kvcc_repo branch were built against torch==2.13.0.
+  # Restore 2.13.0 from the uv local cache (no network needed).
+  TORCH_CACHE=$(find "$HOME/.cache/uv/archive-v0" -maxdepth 2 \
+    -name "torch-2.13.0+cu130.dist-info" -type d 2>/dev/null | \
+    head -1 | xargs -r dirname)
+  if [[ -z "$TORCH_CACHE" ]]; then
+    echo "ERROR: torch 2.13.0+cu130 not found in uv cache; run 'uv pip install torch==2.13.0' from a working environment first" >&2
+    exit 1
+  fi
+  uv pip install "torch==2.13.0" --find-links "$TORCH_CACHE"
+
   # dynamo[vllm] pulls vllm==0.24.0 which pins flashinfer-cubin==0.6.12 (PyPI).
   # The vllm editable install then upgrades flashinfer-python to 0.6.14 but
   # setup.py deliberately skips flashinfer-cubin (not on PyPI since 0.6.14).
