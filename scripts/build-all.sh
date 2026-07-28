@@ -68,6 +68,15 @@ if [[ -d "$VLLM_DIR" ]]; then
   fi
   uv pip install "torch==2.13.0" --find-links "$TORCH_CACHE"
 
+  # torchvision 0.26.0 (pinned by vllm alongside torch 2.11.0) is incompatible
+  # with torch 2.13.0; upgrade to matching 0.28.0 from cache.
+  TV_CACHE=$(find "$HOME/.cache/uv/archive-v0" -maxdepth 2 \
+    -name "torchvision-0.28.0.dist-info" -type d 2>/dev/null | \
+    head -1 | xargs -r dirname)
+  if [[ -n "$TV_CACHE" ]]; then
+    uv pip install "torchvision==0.28.0" --find-links "$TV_CACHE"
+  fi
+
   # dynamo[vllm] pulls vllm==0.24.0 which pins flashinfer-cubin==0.6.12 (PyPI).
   # The vllm editable install then upgrades flashinfer-python to 0.6.14 but
   # setup.py deliberately skips flashinfer-cubin (not on PyPI since 0.6.14).
