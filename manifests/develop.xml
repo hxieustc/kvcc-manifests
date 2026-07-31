@@ -31,7 +31,6 @@
   <!-- KVCC secondary-tier functions (SSH: enterprise classic PATs blocked over HTTPS) -->
   <project name="NVIDIA-dev/kvcc"
            path="kvcc"
-           revision="main"
-           remote="github-ssh" />
+           revision="main" />
 
 </manifest>
