@@ -73,6 +73,11 @@ assert_contains kubernetes/dev-pod.yaml 'GITHUB_USER.*GITHUB_TOKEN'
 assert_not_contains kubernetes/dev-pod.yaml 'ghp_|github_pat_'
 assert_not_contains manifests/develop.xml 'github-ssh|ssh://'
 assert_contains manifests/develop.xml 'revision="cuda-env-fixes"'
+assert_file scripts/verify-env.sh
+assert_contains scripts/build-all.sh 'verify-env\.sh'
+assert_contains scripts/verify-env.sh '2\.13\.0\+cu130'
+assert_contains scripts/verify-env.sh 'flashinfer-jit-cache'
+assert_contains scripts/verify-env.sh 'resolved outside workspace'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%d repository contract failure(s)\n' "$failures" >&2
