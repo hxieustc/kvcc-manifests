@@ -11,6 +11,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # scripts/ is at manifests/scripts/ inside the workspace; go up two levels
 WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VENV_DIR="$WORKSPACE_ROOT/.venv"
+KVCC_TORCH_VERSION="${KVCC_TORCH_VERSION:-2.13.0+cu130}"
+KVCC_TORCHVISION_VERSION="${KVCC_TORCHVISION_VERSION:-0.28.0+cu130}"
+KVCC_TORCH_INDEX_URL="${KVCC_TORCH_INDEX_URL:-https://download.pytorch.org/whl/cu130}"
+KVCC_FLASHINFER_INDEX_URL="${KVCC_FLASHINFER_INDEX_URL:-https://flashinfer.ai/whl/}"
+KVCC_FLASHINFER_CUDA_INDEX_URL="${KVCC_FLASHINFER_CUDA_INDEX_URL:-https://flashinfer.ai/whl/cu130}"
 
 if [[ ! -d "$VENV_DIR" ]]; then
   echo "ERROR: venv not found — run manifests/scripts/bootstrap.sh first" >&2
@@ -56,33 +61,26 @@ if [[ -d "$VLLM_DIR" ]]; then
   uv pip install -r requirements/test/cuda.in
   popd >/dev/null
 
-  # vllm/requirements/cuda.txt pins torch==2.11.0, but the precompiled FA2/FA3
-  # CUDA extensions in the kvcc_repo branch were built against torch==2.13.0.
-  # Restore 2.13.0 from the uv local cache (no network needed).
-  TORCH_CACHE=$(find "$HOME/.cache/uv/archive-v0" -maxdepth 2 \
-    -name "torch-2.13.0+cu130.dist-info" -type d 2>/dev/null | \
-    head -1 | xargs -r dirname)
-  if [[ -z "$TORCH_CACHE" ]]; then
-    echo "ERROR: torch 2.13.0+cu130 not found in uv cache; run 'uv pip install torch==2.13.0' from a working environment first" >&2
-    exit 1
-  fi
-  uv pip install "torch==2.13.0" --find-links "$TORCH_CACHE"
-
-  # torchvision 0.26.0 (pinned by vllm alongside torch 2.11.0) is incompatible
-  # with torch 2.13.0; upgrade to matching 0.28.0 from cache.
-  TV_CACHE=$(find "$HOME/.cache/uv/archive-v0" -maxdepth 2 \
-    -name "torchvision-0.28.0.dist-info" -type d 2>/dev/null | \
-    head -1 | xargs -r dirname)
-  if [[ -n "$TV_CACHE" ]]; then
-    uv pip install "torchvision==0.28.0" --find-links "$TV_CACHE"
-  fi
+  # Dynamo's backend extra and vLLM's test requirements can temporarily select
+  # another torch build. Reconcile from the authoritative CUDA 13.0 index;
+  # never depend on uv's private cache layout or pre-populated HOME state.
+  uv pip install \
+    --index-strategy unsafe-best-match \
+    --extra-index-url "$KVCC_TORCH_INDEX_URL" \
+    "torch==${KVCC_TORCH_VERSION}" \
+    "torchvision==${KVCC_TORCHVISION_VERSION}"
 
   # dynamo[vllm] pulls vllm==0.24.0 which pins flashinfer-cubin==0.6.12 (PyPI).
   # The vllm editable install then upgrades flashinfer-python to 0.6.14 but
   # setup.py deliberately skips flashinfer-cubin (not on PyPI since 0.6.14).
   # Re-pin cubin from flashinfer.ai to match python.
-  FI_VER=$(python3 -c "import importlib.metadata as m; print(m.version('flashinfer-python'))")
-  uv pip install "flashinfer-cubin==${FI_VER}" --extra-index-url https://flashinfer.ai/whl/
+  FI_VER=$("$VENV_DIR/bin/python" -c \
+    "import importlib.metadata as m; print(m.version('flashinfer-python'))")
+  uv pip install \
+    --extra-index-url "$KVCC_FLASHINFER_INDEX_URL" \
+    --extra-index-url "$KVCC_FLASHINFER_CUDA_INDEX_URL" \
+    "flashinfer-cubin==${FI_VER}" \
+    "flashinfer-jit-cache==${FI_VER}+cu130"
 else
   echo "WARNING: vllm directory not found at $VLLM_DIR — skipping" >&2
 fi
@@ -99,6 +97,9 @@ if [[ -d "$KVCC_DIR" ]]; then
 else
   echo "WARNING: kvcc directory not found at $KVCC_DIR — skipping" >&2
 fi
+
+echo "==> Verifying the resolved runtime"
+"$SCRIPT_DIR/verify-env.sh"
 
 echo ""
 echo "==> Build complete. Activate the venv with:"
