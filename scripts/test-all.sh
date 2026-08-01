@@ -16,8 +16,17 @@ PYTHON="$VENV_DIR/bin/python"
 # Options (override via env)
 GPUS="${KVCC_TEST_GPUS:-0,1}"
 KVCC_E2E_TEST="${KVCC_RUN_E2E:-1}"
+export VLLM_DEEP_GEMM_WARMUP="${VLLM_DEEP_GEMM_WARMUP:-skip}"
 
 FAILED=0
+
+cleanup_children() {
+  local pid
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+  done < <(jobs -pr)
+}
+trap cleanup_children EXIT INT TERM
 
 # ---------------------------------------------------------------------------
 # 1. KVCC standalone unit tests (CPU only)
@@ -40,25 +49,44 @@ echo "==> vLLM KVCC unit tests"
   -q || FAILED=1
 
 # ---------------------------------------------------------------------------
-# 3. KVCC end-to-end GPU test
+# 3. Focused Dynamo/vLLM router integration tests
 # ---------------------------------------------------------------------------
-if [[ "$KVCC_E2E_TEST" == "1" ]]; then
-  echo "==> KVCC E2E test (GPUs $GPUS)"
+if [[ -d "$WORKSPACE_ROOT/dynamo" ]]; then
+  echo "==> Dynamo/vLLM router integration tests"
   "$PYTHON" -m pytest \
-    "$WORKSPACE_ROOT/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/validate_kvcc_e2e.py" \
-    --gpus "$GPUS" \
-    --eager-ctrl-connect=true \
-    -vv -s --log-cli-level=INFO || FAILED=1
+    -c /dev/null \
+    "$WORKSPACE_ROOT/dynamo/components/src/dynamo/vllm/tests/test_router_hints.py" \
+    -q || FAILED=1
 fi
 
 # ---------------------------------------------------------------------------
-# 4. Dynamo tests
+# 4. KVCC end-to-end GPU test
 # ---------------------------------------------------------------------------
-if [[ -d "$WORKSPACE_ROOT/dynamo" ]]; then
-  echo "==> Dynamo tests"
-  # TODO: add Dynamo test commands
-  # cargo test --manifest-path "$WORKSPACE_ROOT/dynamo/Cargo.toml" || FAILED=1
-  true
+if [[ "$KVCC_E2E_TEST" == "1" ]]; then
+  if ! "$PYTHON" - "$GPUS" <<'PY'
+import sys
+
+import torch
+
+requested = sys.argv[1].split(",")
+count = torch.cuda.device_count()
+invalid = [item for item in requested if not item.isdigit() or int(item) >= count]
+if invalid:
+    raise SystemExit(
+        f"requested GPU indices {invalid} are unavailable; visible GPU count={count}"
+    )
+PY
+  then
+    echo "ERROR: GPU preflight failed for KVCC_TEST_GPUS=$GPUS" >&2
+    FAILED=1
+  else
+    echo "==> KVCC E2E test (GPUs $GPUS)"
+    "$PYTHON" -m pytest \
+      "$WORKSPACE_ROOT/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/validate_kvcc_e2e.py" \
+      --gpus "$GPUS" \
+      --eager-ctrl-connect=true \
+      -vv -s --log-cli-level=INFO || FAILED=1
+  fi
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then
@@ -66,4 +94,4 @@ if [[ "$FAILED" -ne 0 ]]; then
   exit 1
 fi
 
-echo "==> All tests passed"
+echo "==> All supported KVCC, vLLM/KVCC, Dynamo router, and E2E tests passed"
