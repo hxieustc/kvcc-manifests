@@ -63,6 +63,11 @@ assert_contains kubernetes/dev-pod.yaml \
   'name:[[:space:]]*kvcc-github-auth'
 assert_contains kubernetes/dev-pod.yaml \
   'name:[[:space:]]*repo-installer'
+if [[ "$(grep -Ec 'runAsUser:[[:space:]]*0' kubernetes/dev-pod.yaml)" -lt 2 ]]; then
+  fail 'both repo init container and workspace container run as UID 0'
+else
+  pass 'both repo init container and workspace container run as UID 0'
+fi
 assert_contains kubernetes/dev-pod.yaml \
   'storageClassName:[[:space:]]*vast'
 assert_contains kubernetes/dev-pod.yaml 'storage:[[:space:]]*200Gi'
