@@ -80,6 +80,22 @@ assert_contains scripts/verify-env.sh 'flashinfer-jit-cache'
 assert_contains scripts/verify-env.sh 'resolved outside workspace'
 assert_contains scripts/test-all.sh 'VLLM_DEEP_GEMM_WARMUP'
 assert_contains scripts/test-all.sh 'test_router_hints\.py'
+assert_contains README.md 'export GITHUB_USER=hxieustc'
+assert_contains README.md 'export GITHUB_EMAIL=.*harryx@nvidia\.com'
+assert_contains README.md 'create secret generic kvcc-github-auth'
+assert_contains README.md '--from-env-file'
+assert_contains README.md \
+  'tsh kubectl apply -f kubernetes/dev-pod\.yaml'
+assert_contains README.md \
+  'repo init.*https://github\.com/hxieustc/kvcc-manifests\.git'
+assert_contains README.md '-b cuda-env-fixes'
+assert_contains README.md 'repo sync'
+assert_contains README.md 'bash manifests/scripts/bootstrap\.sh'
+assert_contains README.md 'bash manifests/scripts/build-all\.sh'
+assert_contains README.md 'bash manifests/scripts/test-all\.sh'
+assert_contains README.md 'delete pod kvcc-dev'
+assert_contains README.md 'PVC.*retained|retains.*PVC'
+assert_not_contains README.md 'http\..*\.extraHeader|Authorization: Basic'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%d repository contract failure(s)\n' "$failures" >&2
