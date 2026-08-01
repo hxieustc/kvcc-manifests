@@ -49,6 +49,30 @@ assert_not_contains() {
 }
 
 assert_file kubernetes/dev-pod.yaml
+assert_contains kubernetes/dev-pod.yaml \
+  'nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest'
+assert_contains kubernetes/dev-pod.yaml \
+  'nvidia.com/gpu:[[:space:]]*"?2"?'
+assert_contains kubernetes/dev-pod.yaml \
+  'nvidia.com/gpu.product:[[:space:]]*NVIDIA-B200'
+assert_contains kubernetes/dev-pod.yaml \
+  'kubernetes.io/arch:[[:space:]]*amd64'
+assert_contains kubernetes/dev-pod.yaml \
+  'mountPath:[[:space:]]*/dev/shm'
+assert_contains kubernetes/dev-pod.yaml \
+  'name:[[:space:]]*kvcc-github-auth'
+assert_contains kubernetes/dev-pod.yaml \
+  'name:[[:space:]]*repo-installer'
+assert_contains kubernetes/dev-pod.yaml \
+  'storageClassName:[[:space:]]*vast'
+assert_contains kubernetes/dev-pod.yaml 'storage:[[:space:]]*200Gi'
+assert_contains kubernetes/dev-pod.yaml 'sizeLimit:[[:space:]]*64Gi'
+assert_contains kubernetes/dev-pod.yaml 'credential\.helper'
+assert_contains kubernetes/dev-pod.yaml 'password=%s'
+assert_contains kubernetes/dev-pod.yaml 'GITHUB_USER.*GITHUB_TOKEN'
+assert_not_contains kubernetes/dev-pod.yaml 'ghp_|github_pat_'
+assert_not_contains manifests/develop.xml 'github-ssh|ssh://'
+assert_contains manifests/develop.xml 'revision="cuda-env-fixes"'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%d repository contract failure(s)\n' "$failures" >&2

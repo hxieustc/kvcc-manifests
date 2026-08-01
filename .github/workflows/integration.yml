@@ -50,7 +50,10 @@ jobs:
       - name: Sync workspace
         run: |
           MANIFEST="${{ github.event.inputs.manifest || 'manifests/develop.xml' }}"
-          repo init -u git@github.com:hxieustc/kvcc-manifests.git -m "$MANIFEST"
+          repo init \
+            -u https://github.com/hxieustc/kvcc-manifests.git \
+            -b cuda-env-fixes \
+            -m "$MANIFEST"
           repo sync -j4
 
       - name: Bootstrap

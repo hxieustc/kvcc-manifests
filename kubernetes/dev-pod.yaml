@@ -1,0 +1,141 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kvcc-mbench
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kvcc-workspace
+  namespace: kvcc-mbench
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: vast
+  resources:
+    requests:
+      storage: 200Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kvcc-pod-tools
+  namespace: kvcc-mbench
+data:
+  github-credential-helper.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "${1:-}" in
+      get)
+        printf 'protocol=https\nhost=github.com\nusername=%s\npassword=%s\n' \
+          "$GITHUB_USER" "$GITHUB_TOKEN"
+        ;;
+      store|erase)
+        ;;
+      *)
+        exit 1
+        ;;
+    esac
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kvcc-dev
+  namespace: kvcc-mbench
+  labels:
+    app.kubernetes.io/name: kvcc-dev
+    app.kubernetes.io/part-of: kvcc
+spec:
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    nvidia.com/gpu.product: NVIDIA-B200
+  securityContext:
+    fsGroup: 0
+  initContainers:
+    - name: repo-installer
+      image: curlimages/curl:8.12.1
+      command:
+        - /bin/sh
+        - -ec
+        - |
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o /opt/kvcc-bin/repo
+          chmod 0755 /opt/kvcc-bin/repo
+      volumeMounts:
+        - name: kvcc-bin
+          mountPath: /opt/kvcc-bin
+  containers:
+    - name: workspace
+      image: nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
+      imagePullPolicy: Always
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        allowPrivilegeEscalation: false
+      command:
+        - /bin/bash
+        - -lc
+        - |
+          set -euo pipefail
+          git config --global user.name "$GITHUB_USER"
+          git config --global user.email "$GITHUB_EMAIL"
+          git config --global credential.helper \
+            /opt/kvcc-pod-tools/github-credential-helper.sh
+          trap : TERM INT
+          sleep infinity & wait
+      env:
+        - name: HOME
+          value: /root
+        - name: CUDARC_CUDA_VERSION
+          value: "13000"
+        - name: KVCC_WORKSPACE
+          value: /opt/kvcc-workspace
+        - name: PATH
+          value: /opt/kvcc-bin:/root/.local/bin:/root/.cargo/bin:/opt/uv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      envFrom:
+        - secretRef:
+            name: kvcc-github-auth
+      resources:
+        requests:
+          cpu: "16"
+          memory: 64Gi
+          ephemeral-storage: 20Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "64"
+          memory: 256Gi
+          ephemeral-storage: 100Gi
+          nvidia.com/gpu: "2"
+      volumeMounts:
+        - name: workspace
+          mountPath: /opt/kvcc-workspace
+        - name: kvcc-bin
+          mountPath: /opt/kvcc-bin
+          readOnly: true
+        - name: kvcc-pod-tools
+          mountPath: /opt/kvcc-pod-tools
+          readOnly: true
+        - name: dshm
+          mountPath: /dev/shm
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: kvcc-workspace
+    - name: kvcc-bin
+      emptyDir: {}
+    - name: kvcc-pod-tools
+      configMap:
+        name: kvcc-pod-tools
+        defaultMode: 0555
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi
