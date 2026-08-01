@@ -8,6 +8,9 @@ on:
     paths:
       - "manifests/**"
       - "scripts/**"
+      - "tests/**"
+      - "kubernetes/**"
+      - "README.md"
       - ".github/workflows/**"
   workflow_dispatch:
     inputs:
@@ -29,6 +32,9 @@ jobs:
             echo "Checking $f"
             xmllint --noout "$f"
           done
+
+      - name: Validate manifest workflow
+        run: bash tests/run.sh
 
   # ---------------------------------------------------------------------------
   # GPU integration test — requires a self-hosted runner with GPUs and
