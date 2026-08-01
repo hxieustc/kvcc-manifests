@@ -78,6 +78,8 @@ assert_contains scripts/build-all.sh 'verify-env\.sh'
 assert_contains scripts/verify-env.sh '2\.13\.0\+cu130'
 assert_contains scripts/verify-env.sh 'flashinfer-jit-cache'
 assert_contains scripts/verify-env.sh 'resolved outside workspace'
+assert_contains scripts/test-all.sh 'VLLM_DEEP_GEMM_WARMUP'
+assert_contains scripts/test-all.sh 'test_router_hints\.py'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%d repository contract failure(s)\n' "$failures" >&2
