@@ -1,12 +1,37 @@
 # kvcc-manifests
 
 Google Repo manifests and scripts for synchronizing, building, and testing
-customized Dynamo, vLLM, and KVCC together. The `cuda-env-fixes` branch
-supports two workflows:
+customized Dynamo, vLLM, and KVCC together. It tracks:
 
-1. Run Repo and the build/test scripts manually on a compatible Linux host or
+- the [Dynamo](https://github.com/ai-dynamo/dynamo) router,
+- [vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches, and
+- the [KVCC](https://github.com/NVIDIA-dev/kvcc) secondary-tier implementation.
+
+**Synced workspace** (`kvcc-workspace/`):
+
+```
+kvcc-workspace/
+├── manifests/               ← kvcc-manifests repo (synced so scripts are accessible)
+│   ├── scripts/
+│   │   ├── bootstrap.sh
+│   │   ├── build-all.sh
+│   │   └── test-all.sh
+│   ├── tests/               ← unit tests for manifests
+│   ├── kubernetes/          ← kubernetes pod manifests
+│   │   └── dev-pod.yaml
+│   └── manifests/
+│       └── develop.xml
+├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
+├── vllm/                    ← mkhazraee/vllm-priv @ kvcc_repo
+├── kvcc/                    ← NVIDIA-dev/kvcc @ main
+└── .venv/                   ← created by bootstrap.sh
+```
+
+It supports **two workflows**:
+
+1. **local development**: Run Repo and the build/test scripts manually on a compatible Linux host or
    container, without Kubernetes.
-2. Launch a Kubernetes Pod that runs the complete workflow automatically and
+2. **kubernetes development**: Launch a Kubernetes Pod that runs the complete workflow automatically and
    remains available for interactive development after all tests pass.
 
 Both workflows execute:
@@ -15,14 +40,7 @@ Both workflows execute:
 repo sync → bootstrap.sh → build-all.sh → test-all.sh
 ```
 
-The scripts assume the synchronized source revisions are correct. They
-reconcile the shared CUDA/Python environment; they do not patch Dynamo, vLLM,
-or KVCC source code.
-
-The complete synchronization, bootstrap, build, unit-test, and two-GPU E2E
-sequence has been validated through manual execution.
-
-## What the workflow installs
+**What the workflow installs**
 
 - Python 3.12 in `/opt/kvcc-workspace/.venv`
 - customized Dynamo and its Rust/Python bindings
@@ -34,7 +52,7 @@ sequence has been validated through manual execution.
 `build-all.sh` verifies package versions, CUDA selection, native imports, and
 workspace import provenance before reporting success.
 
-## Workflow 1: Manual execution without Kubernetes
+## Workflow 1: Local Development (manual execution)
 
 Use this path on a compatible Linux host or an existing container without a
 Pod.
@@ -48,16 +66,7 @@ Pod.
 - network access to GitHub and the configured Python package indexes
 - `GITHUB_USER`, `GITHUB_EMAIL`, and `GITHUB_TOKEN` in the shell environment
 
-Export and validate the GitHub values:
-
-```bash
-export GITHUB_USER=hxieustc
-export GITHUB_EMAIL="harryx@nvidia.com"
-# GITHUB_TOKEN should already be exported by your shell startup configuration.
-test -n "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
-```
-
-Install Git, Git LFS, curl, and Google Repo:
+### 1. Install Git, Git LFS, curl, and Google Repo:
 
 ```bash
 sudo apt-get update
@@ -72,29 +81,25 @@ export PATH="$HOME/.local/bin:$PATH"
 git lfs install
 ```
 
-Configure Git identity and GitHub-scoped HTTPS authorization:
+### 2. Configure Git identity and GitHub-scoped HTTPS authorization:
 
 ```bash
 git config --global user.name "$GITHUB_USER"
 git config --global user.email "$GITHUB_EMAIL"
+
 git config --global credential.https://github.com/.username "$GITHUB_USER"
 git config --global credential.https://github.com/.email "$GITHUB_EMAIL"
-
-github_basic_auth="$(
-  printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64 | tr -d '\n'
-)"
-git config --global http.https://github.com/.extraHeader \
-  "Authorization: Basic ${github_basic_auth}"
-unset github_basic_auth
+git config --global http.https://github.com/.extraHeader "Authorization: Basic $(echo -n "$GITHUB_USER:$GITHUB_TOKEN" | base64)"
 ```
 
 The authorization header is stored in the user’s global Git configuration.
-Anyone who can read that file can recover the credential. Remove it when it is
-no longer needed:
+Remove it when it is no longer needed:
 
 ```bash
 git config --global --unset-all http.https://github.com/.extraHeader
 ```
+
+### 3. repo sync from sources
 
 Create the workspace, synchronize all repositories, and run the complete
 workflow:
@@ -107,13 +112,58 @@ repo init -u https://github.com/hxieustc/kvcc-manifests.git \
   -b cuda-env-fixes \
   -m manifests/develop.xml
 repo sync -j8
+```
 
+### 4. Boostrap the build environment
+
+```bash
 bash manifests/scripts/bootstrap.sh
+```
+
+This script 
+
+- checks and installs prerequisites 
+- creates `.venv` with Python 3.12
+- installs `maturin`, `pandas`, `pre-commit`
+- hooks pre-commit into the vLLM repo
+
+### 5. Build and install Dynamo, vLLM, and KVCC
+
+```bash
 bash manifests/scripts/build-all.sh
+```
+
+This installs 
+
+1. Dynamo (Rust bindings via `maturin` + Python packages) first,
+2. vLLM (pre-compiled wheel, editable install), 
+3. KVCC (editable install into the workspace venv). 
+
+Order matters: Dynamo's `[vllm]` extras would
+overwrite the editable vLLM install if built second; KVCC must come after vLLM
+so the `nvidia-kvcc` package lands in the same environment.
+
+### 6. Activate the venv and run tests
+
+Either manually run invidividual unit/e2e tests:
+
+```bash
+source .venv/bin/activate
+
+# CPU-only unit tests (no GPU required)
+python -m pytest kvcc/tests/ -q
+python -m pytest vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_config.py \
+                 vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py \
+                 vllm/tests/v1/kv_offload/tiering/test_kvcc_tier.py -q
+```
+
+or run all tests:
+```bash
+# Full GPU end-to-end test
 bash manifests/scripts/test-all.sh
 ```
 
-No venv activation is required between scripts; every script explicitly
+Note: no venv activation is required between scripts; every script explicitly
 targets `/opt/kvcc-workspace/.venv`.
 
 ## Workflow 2: Fully automated Kubernetes Pod
@@ -128,13 +178,7 @@ does not become Ready, and the failing stage remains visible in its logs.
 
 ### 1. Prepare the namespace and GitHub Secret
 
-Export credentials in the shell where `tsh kubectl` runs:
-
-```bash
-export GITHUB_USER=hxieustc
-export GITHUB_EMAIL="harryx@nvidia.com"
-test -n "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
-```
+Assume that `GITHUB_USER`, `GITHUB_EMAL`, `GITHUB_TOKEN` are all defined in shell environment already.
 
 Create the namespace and pipe the three values into a Kubernetes Secret. This
 avoids a temporary credential file and a token-bearing process argument:
@@ -156,7 +200,7 @@ The Pod writes a GitHub-scoped Basic authorization header to its ephemeral
 URL, or a local process argument. Anyone who can read the Secret or exec into
 the Pod can access it.
 
-### 2. Verify the cluster and persistent model cache
+### 2. (optional) Verify the cluster and persistent model cache
 
 Confirm the Teleport context and the pre-existing shared model PVC:
 
@@ -171,15 +215,13 @@ The manifest does not create or delete this PVC.
 
 ### 3. Recreate and launch the Pod
 
-Kubernetes does not allow adding or removing containers, volumes, or mounts
-from an existing Pod. Delete any previous `kvcc-dev` Pod before applying a
-changed manifest:
-
 ```bash
-tsh kubectl -n kvcc-mbench delete pod kvcc-dev \
-  --ignore-not-found --wait=true
 tsh kubectl apply -f kubernetes/dev-pod.yaml
 ```
+
+Note: optionally delete any previous `kvcc-dev` pod if necessary:
+```bash
+tsh kubectl -n kvcc-mbench delete pod kvcc-dev --ignore-not-found --wait=true
 
 The Pod requests:
 
@@ -346,3 +388,67 @@ tsh kubectl -n kvcc-mbench delete secret kvcc-github-auth
 ```
 
 Do not delete `shared-model-cache` as part of normal cleanup.
+
+---
+
+## Repo commands for develop
+
+### Sync
+
+```bash
+# Sync all projects (fetch + checkout tracked branches)
+repo sync -j8
+
+# Sync a single project
+repo sync dynamo
+repo sync vllm
+```
+
+### Branching
+
+```bash
+# Create a local topic branch across all projects
+repo start my-feature --all
+
+# Create a topic branch in one project only
+repo start my-feature dynamo
+```
+
+### Status and diff
+
+```bash
+# Show working-tree status across all projects
+repo status
+
+# Diff all uncommitted changes
+repo diff
+
+# Diff staged changes only
+repo diff --cached
+```
+
+### Committing and uploading for review
+
+```bash
+# Commit in a specific project as usual
+cd dynamo && git add -p && git commit && cd -
+
+# Upload a branch for Gerrit code review (if using Gerrit)
+repo upload --cbr
+```
+
+### Switching manifests
+
+```bash
+# Re-initialise with a different manifest (e.g. a release snapshot)
+repo init -m manifests/release-2026.07.xml
+repo sync -j8
+```
+
+### Pinning the current state (lockfile)
+
+```bash
+# Write a snapshot of all current SHAs to locked/
+repo manifest -r -o locked/develop-$(date +%Y.%m.%d).lock.xml
+```
+
