@@ -2,31 +2,38 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-# shellcheck source=lib.sh
-source "$SCRIPT_DIR/lib.sh"
+DOCKER_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-require_env GITHUB_USER
-require_env GITHUB_EMAIL
-require_env GITHUB_TOKEN
-require_command docker
+for name in GITHUB_USER GITHUB_EMAIL GITHUB_TOKEN; do
+  if [[ -z "${!name:-}" ]]; then
+    printf 'ERROR: required environment variable is not set: %s\n' "$name" >&2
+    exit 1
+  fi
+done
 
-DYNAMO_BASE_IMAGE="${DYNAMO_BASE_IMAGE:-nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest}"
+command -v docker >/dev/null 2>&1 || {
+  printf 'ERROR: docker is required\n' >&2
+  exit 1
+}
+
+DYNAMO_BUILDER_IMAGE="${DYNAMO_BUILDER_IMAGE:-rust:1.93-bookworm}"
+VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-vllm/vllm-openai:nightly-6f91edf96d3f3272945809c04702380053bff4de@sha256:674c5aa666d38c07a0dc779f8c77a05c2b859617410d16dcdd8a8776166c92b9}"
 KVCC_IMAGE="${KVCC_IMAGE:-kvcc-custom-runtime:dev}"
 KVCC_PLATFORM="${KVCC_PLATFORM:-linux/amd64}"
 REPO_SYNC_JOBS="${REPO_SYNC_JOBS:-8}"
 
-log "Building $KVCC_IMAGE for $KVCC_PLATFORM"
+printf '==> Building %s for %s\n' "$KVCC_IMAGE" "$KVCC_PLATFORM"
 docker buildx build \
   --platform "$KVCC_PLATFORM" \
   --load \
   --secret id=github_token,env=GITHUB_TOKEN \
   --build-arg GITHUB_USER \
   --build-arg GITHUB_EMAIL \
-  --build-arg "DYNAMO_BASE_IMAGE=$DYNAMO_BASE_IMAGE" \
+  --build-arg "DYNAMO_BUILDER_IMAGE=$DYNAMO_BUILDER_IMAGE" \
+  --build-arg "VLLM_RUNTIME_IMAGE=$VLLM_RUNTIME_IMAGE" \
   --build-arg "REPO_SYNC_JOBS=$REPO_SYNC_JOBS" \
   --tag "$KVCC_IMAGE" \
-  --file "$REPO_ROOT/Dockerfile" \
-  "$REPO_ROOT"
+  --file "$DOCKER_ROOT/Dockerfile" \
+  "$DOCKER_ROOT"
 
-log "Built $KVCC_IMAGE"
+printf '==> Built %s\n' "$KVCC_IMAGE"
