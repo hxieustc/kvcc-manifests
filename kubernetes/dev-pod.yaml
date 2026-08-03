@@ -60,7 +60,26 @@ spec:
           unset github_basic_auth
 
           mkdir -p "$KVCC_WORKSPACE"
-          touch /tmp/kvcc-tools-ready
+          cd "$KVCC_WORKSPACE"
+
+          echo "==> Synchronizing Dynamo, vLLM, and KVCC"
+          repo init \
+            -u https://github.com/hxieustc/kvcc-manifests.git \
+            -b cuda-env-fixes \
+            -m manifests/develop.xml
+          repo sync -j8
+
+          echo "==> Bootstrapping the build environment"
+          bash manifests/scripts/bootstrap.sh
+
+          echo "==> Building Dynamo, vLLM, and KVCC"
+          bash manifests/scripts/build-all.sh
+
+          echo "==> Running unit, integration, and E2E tests"
+          bash manifests/scripts/test-all.sh
+
+          touch /tmp/kvcc-workflow-ready
+          echo "==> Automated workflow passed; pod is ready for development"
           trap : TERM INT
           sleep infinity & wait
       env:
@@ -92,7 +111,7 @@ spec:
             - /bin/bash
             - -ec
             - |
-              test -f /tmp/kvcc-tools-ready
+              test -f /tmp/kvcc-workflow-ready
               git --version
               git lfs version
               /usr/local/bin/repo version
@@ -109,3 +128,6 @@ spec:
       emptyDir:
         medium: Memory
         sizeLimit: 64Gi
+    - name: models-shared
+      persistentVolumeClaim:
+        claimName: shared-model-cache

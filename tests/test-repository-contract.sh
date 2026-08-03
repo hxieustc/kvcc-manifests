@@ -60,6 +60,10 @@ assert_contains kubernetes/dev-pod.yaml \
 assert_contains kubernetes/dev-pod.yaml \
   'mountPath:[[:space:]]*/dev/shm'
 assert_contains kubernetes/dev-pod.yaml \
+  'mountPath:[[:space:]]*/models-shared'
+assert_contains kubernetes/dev-pod.yaml \
+  '^[[:space:]]{8}claimName:[[:space:]]*shared-model-cache'
+assert_contains kubernetes/dev-pod.yaml \
   'name:[[:space:]]*kvcc-github-auth'
 assert_contains kubernetes/dev-pod.yaml 'sizeLimit:[[:space:]]*64Gi'
 assert_contains kubernetes/dev-pod.yaml 'apt-get install'
@@ -73,11 +77,21 @@ assert_contains kubernetes/dev-pod.yaml \
   'http\.https://github\.com/\.extraHeader'
 assert_contains kubernetes/dev-pod.yaml 'Authorization: Basic'
 assert_contains kubernetes/dev-pod.yaml 'readinessProbe:'
+assert_contains kubernetes/dev-pod.yaml \
+  'https://github\.com/hxieustc/kvcc-manifests\.git'
+assert_contains kubernetes/dev-pod.yaml 'repo sync -j8'
+assert_contains kubernetes/dev-pod.yaml \
+  'bash manifests/scripts/bootstrap\.sh'
+assert_contains kubernetes/dev-pod.yaml \
+  'bash manifests/scripts/build-all\.sh'
+assert_contains kubernetes/dev-pod.yaml \
+  'bash manifests/scripts/test-all\.sh'
+assert_contains kubernetes/dev-pod.yaml '/tmp/kvcc-workflow-ready'
+assert_contains kubernetes/dev-pod.yaml 'sleep infinity'
 assert_not_contains kubernetes/dev-pod.yaml 'kind:[[:space:]]*PersistentVolumeClaim'
 assert_not_contains kubernetes/dev-pod.yaml 'kind:[[:space:]]*ConfigMap'
 assert_not_contains kubernetes/dev-pod.yaml 'initContainers:'
 assert_not_contains kubernetes/dev-pod.yaml 'kvcc-pod-tools|kvcc-bin'
-assert_not_contains kubernetes/dev-pod.yaml 'persistentVolumeClaim:'
 assert_not_contains kubernetes/dev-pod.yaml 'credential\.helper'
 assert_not_contains kubernetes/dev-pod.yaml 'ghp_|github_pat_'
 assert_not_contains manifests/develop.xml 'github-ssh|ssh://'
@@ -103,6 +117,12 @@ assert_contains README.md 'bash manifests/scripts/bootstrap\.sh'
 assert_contains README.md 'bash manifests/scripts/build-all\.sh'
 assert_contains README.md 'bash manifests/scripts/test-all\.sh'
 assert_contains README.md 'delete pod kvcc-dev'
+assert_contains README.md 'Manual.*without Kubernetes|without a Pod'
+assert_contains README.md 'Automated Kubernetes|automated Pod'
+assert_contains README.md 'get pvc shared-model-cache'
+assert_contains README.md '--ignore-not-found'
+assert_contains README.md 'logs.*kvcc-dev'
+assert_contains README.md 'exec -it kvcc-dev'
 assert_contains README.md 'ephemeral|container-local'
 assert_not_contains README.md 'PVC.*retained|retains.*PVC'
 assert_not_contains README.md 'credential helper|credential-helper'

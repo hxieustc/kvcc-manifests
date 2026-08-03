@@ -1,18 +1,26 @@
 # kvcc-manifests
 
-Google Repo manifests and scripts for building and testing customized Dynamo,
-vLLM, and KVCC together. The `cuda-env-fixes` branch provides a manual
-Kubernetes workflow based on NVIDIA's Dynamo vLLM runtime image.
+Google Repo manifests and scripts for synchronizing, building, and testing
+customized Dynamo, vLLM, and KVCC together. The `cuda-env-fixes` branch
+supports two workflows:
 
-The supported workflow is:
+1. Run Repo and the build/test scripts manually on a compatible Linux host or
+   container, without Kubernetes.
+2. Launch a Kubernetes Pod that runs the complete workflow automatically and
+   remains available for interactive development after all tests pass.
+
+Both workflows execute:
 
 ```text
-launch pod → repo sync → bootstrap.sh → build-all.sh → test-all.sh
+repo sync → bootstrap.sh → build-all.sh → test-all.sh
 ```
 
-The scripts assume the synchronized Dynamo, vLLM, and KVCC source revisions are
-correct. They reconcile the shared CUDA/Python environment; they do not patch
-source repositories.
+The scripts assume the synchronized source revisions are correct. They
+reconcile the shared CUDA/Python environment; they do not patch Dynamo, vLLM,
+or KVCC source code.
+
+The complete synchronization, bootstrap, build, unit-test, and two-GPU E2E
+sequence has been validated through manual execution.
 
 ## What the workflow installs
 
@@ -24,12 +32,23 @@ source repositories.
 - matching FlashInfer Python, cubin, and `+cu130` JIT-cache packages
 
 `build-all.sh` verifies package versions, CUDA selection, native imports, and
-workspace import provenance before it reports success.
+workspace import provenance before reporting success.
 
-## 1. Prepare GitHub credentials
+## Workflow 1: Manual execution without Kubernetes
 
-The private repositories are synchronized over HTTPS. Export these values in
-the shell where you run `tsh kubectl`:
+Use this path on a compatible Linux host or an existing container without a
+Pod.
+
+### Prerequisites
+
+- Linux on AMD64 with `apt` and `dpkg`
+- root access when `bootstrap.sh` needs to install missing system packages
+- NVIDIA drivers and at least two visible GPUs for the default E2E test
+- `/models-shared` mounted when shared model data is required
+- network access to GitHub and the configured Python package indexes
+- `GITHUB_USER`, `GITHUB_EMAIL`, and `GITHUB_TOKEN` in the shell environment
+
+Export and validate the GitHub values:
 
 ```bash
 export GITHUB_USER=hxieustc
@@ -38,9 +57,87 @@ export GITHUB_EMAIL="harryx@nvidia.com"
 test -n "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 ```
 
-Create the namespace and pipe the three values directly into a Kubernetes
-Secret. This avoids both a temporary credential file and a token-bearing
-process argument:
+Install Git, Git LFS, curl, and Google Repo:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  ca-certificates curl git git-lfs
+
+mkdir -p "$HOME/.local/bin"
+curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+  -o "$HOME/.local/bin/repo"
+chmod 0755 "$HOME/.local/bin/repo"
+export PATH="$HOME/.local/bin:$PATH"
+git lfs install
+```
+
+Configure Git identity and GitHub-scoped HTTPS authorization:
+
+```bash
+git config --global user.name "$GITHUB_USER"
+git config --global user.email "$GITHUB_EMAIL"
+git config --global credential.https://github.com/.username "$GITHUB_USER"
+git config --global credential.https://github.com/.email "$GITHUB_EMAIL"
+
+github_basic_auth="$(
+  printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64 | tr -d '\n'
+)"
+git config --global http.https://github.com/.extraHeader \
+  "Authorization: Basic ${github_basic_auth}"
+unset github_basic_auth
+```
+
+The authorization header is stored in the user’s global Git configuration.
+Anyone who can read that file can recover the credential. Remove it when it is
+no longer needed:
+
+```bash
+git config --global --unset-all http.https://github.com/.extraHeader
+```
+
+Create the workspace, synchronize all repositories, and run the complete
+workflow:
+
+```bash
+mkdir -p /opt/kvcc-workspace
+cd /opt/kvcc-workspace
+
+repo init -u https://github.com/hxieustc/kvcc-manifests.git \
+  -b cuda-env-fixes \
+  -m manifests/develop.xml
+repo sync -j8
+
+bash manifests/scripts/bootstrap.sh
+bash manifests/scripts/build-all.sh
+bash manifests/scripts/test-all.sh
+```
+
+No venv activation is required between scripts; every script explicitly
+targets `/opt/kvcc-workspace/.venv`.
+
+## Workflow 2: Fully automated Kubernetes Pod
+
+The Pod installs Git, Git LFS, and Repo, configures GitHub authentication,
+synchronizes all repositories, bootstraps the environment, builds every
+component, and runs all supported tests. It becomes Ready only after the
+complete workflow succeeds, then remains running for interactive development.
+
+If any command fails, `set -euo pipefail` terminates the container. The Pod
+does not become Ready, and the failing stage remains visible in its logs.
+
+### 1. Prepare the namespace and GitHub Secret
+
+Export credentials in the shell where `tsh kubectl` runs:
+
+```bash
+export GITHUB_USER=hxieustc
+export GITHUB_EMAIL="harryx@nvidia.com"
+test -n "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
+```
+
+Create the namespace and pipe the three values into a Kubernetes Secret. This
+avoids a temporary credential file and a token-bearing process argument:
 
 ```bash
 tsh kubectl create namespace kvcc-mbench \
@@ -54,59 +151,86 @@ printf 'GITHUB_USER=%s\nGITHUB_EMAIL=%s\nGITHUB_TOKEN=%s\n' \
   tsh kubectl apply -f -
 ```
 
-The pod reads the Secret into its environment at startup and writes a
-GitHub-scoped Basic authorization header to its ephemeral `/root/.gitconfig`.
-The token is not stored in the pod manifest, a Git remote URL, or a local
-process argument. Anyone who can read the Secret or exec into the pod can
-access the credential.
+The Pod writes a GitHub-scoped Basic authorization header to its ephemeral
+`/root/.gitconfig`. The token is not stored in the Pod manifest, a Git remote
+URL, or a local process argument. Anyone who can read the Secret or exec into
+the Pod can access it.
 
-## 2. Launch the Dynamo development pod
+### 2. Verify the cluster and persistent model cache
 
-Check that Teleport points at the intended cluster, then apply the manifest:
+Confirm the Teleport context and the pre-existing shared model PVC:
 
 ```bash
 tsh status
 tsh kubectl config current-context
-tsh kubectl apply -f kubernetes/dev-pod.yaml
-tsh kubectl -n kvcc-mbench wait \
-  --for=condition=Ready pod/kvcc-dev --timeout=30m
+tsh kubectl -n kvcc-mbench get pvc shared-model-cache
 ```
 
-The pod requests:
+`shared-model-cache` must be Bound. The Pod mounts it at `/models-shared`.
+The manifest does not create or delete this PVC.
+
+### 3. Recreate and launch the Pod
+
+Kubernetes does not allow adding or removing containers, volumes, or mounts
+from an existing Pod. Delete any previous `kvcc-dev` Pod before applying a
+changed manifest:
+
+```bash
+tsh kubectl -n kvcc-mbench delete pod kvcc-dev \
+  --ignore-not-found --wait=true
+tsh kubectl apply -f kubernetes/dev-pod.yaml
+```
+
+The Pod requests:
 
 ```text
-image:      nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
-arch:       AMD64
-GPU:        2 × NVIDIA B200
-/dev/shm:   64 GiB
-workspace:  container-local ephemeral storage
+image:          nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
+arch:           AMD64
+GPU:            2 × NVIDIA B200
+/dev/shm:       64 GiB memory-backed emptyDir
+workspace:      /opt/kvcc-workspace, container-local and ephemeral
+model storage:  /models-shared, persistent shared-model-cache PVC
 ```
 
-Before the pod becomes Ready, the main container installs Git and Git LFS and
-downloads Google's `repo` tool to `/usr/local/bin/repo`. `bootstrap.sh`
-installs any remaining system build prerequisites, uv, and Rust as needed.
+### 4. Monitor the automated workflow
 
-## 3. Synchronize the repositories
+Follow installation, synchronization, build, and test output:
 
-Open a shell in the pod:
+```bash
+tsh kubectl -n kvcc-mbench logs -f pod/kvcc-dev
+```
+
+The container remains alive after success, so press Ctrl-C after this message:
+
+```text
+==> Automated workflow passed; pod is ready for development
+```
+
+In another terminal, wait for the final readiness marker:
+
+```bash
+tsh kubectl -n kvcc-mbench wait \
+  --for=condition=Ready pod/kvcc-dev --timeout=8h
+```
+
+If the Pod fails or does not become Ready, inspect the failing stage:
+
+```bash
+tsh kubectl -n kvcc-mbench get pod kvcc-dev
+tsh kubectl -n kvcc-mbench describe pod kvcc-dev
+tsh kubectl -n kvcc-mbench logs pod/kvcc-dev
+```
+
+### 5. Enter the validated development environment
+
+After the Pod is Ready:
 
 ```bash
 tsh kubectl -n kvcc-mbench exec -it kvcc-dev -- bash
-```
-
-Inside the pod, initialize this branch and synchronize all projects:
-
-```bash
-mkdir -p /opt/kvcc-workspace
 cd /opt/kvcc-workspace
-
-repo init -u https://github.com/hxieustc/kvcc-manifests.git \
-  -b cuda-env-fixes \
-  -m manifests/develop.xml
-repo sync -j8
 ```
 
-The workspace layout is:
+The synchronized layout is:
 
 ```text
 /opt/kvcc-workspace/
@@ -122,7 +246,7 @@ The branch manifest tracks:
 - Dynamo `oandreeva/router_hints`
 - vLLM `kvcc_repo`
 - KVCC `main`
-- this manifest repository's `cuda-env-fixes` branch
+- this manifest repository’s `cuda-env-fixes` branch
 
 For benchmark reproducibility, record an exact lock after a known-green sync:
 
@@ -131,18 +255,7 @@ mkdir -p manifests/locked
 repo manifest -r -o manifests/locked/cuda-env-fixes.lock.xml
 ```
 
-## 4. Bootstrap, build, and test
-
-Run the three scripts manually from `/opt/kvcc-workspace`:
-
-```bash
-bash manifests/scripts/bootstrap.sh
-bash manifests/scripts/build-all.sh
-bash manifests/scripts/test-all.sh
-```
-
-No venv activation is required between scripts; each script explicitly targets
-`/opt/kvcc-workspace/.venv`.
+## Test scope and useful overrides
 
 `test-all.sh` runs:
 
@@ -151,11 +264,12 @@ No venv activation is required between scripts; each script explicitly targets
 3. focused Dynamo/vLLM router integration tests.
 4. the two-GPU KVCC E2E test.
 
-DeepGEMM autotuning is skipped for the E2E workers because it is unrelated to
-KVCC correctness and can exceed worker startup time. The script verifies the
-requested GPU indices before starting E2E.
+DeepGEMM autotuning is skipped for E2E workers because it is unrelated to KVCC
+correctness and can exceed worker startup time. The script verifies requested
+GPU indices before starting E2E.
 
-### Useful overrides
+The following overrides apply to manual script invocations. To use them during
+automated Pod startup, add matching `env` entries to the workspace container.
 
 Run CPU and focused router tests without E2E:
 
@@ -169,14 +283,13 @@ Select different visible GPU indices:
 KVCC_TEST_GPUS=2,3 bash manifests/scripts/test-all.sh
 ```
 
-Enable vLLM pre-commit hook installation during bootstrap:
+Enable vLLM pre-commit hooks:
 
 ```bash
 KVCC_INSTALL_PRECOMMIT=1 bash manifests/scripts/bootstrap.sh
 ```
 
-Override package indexes or versions only when intentionally testing another
-runtime matrix:
+Override the runtime matrix only when intentionally testing other packages:
 
 ```bash
 KVCC_TORCH_VERSION=2.13.0+cu130 \
@@ -187,7 +300,7 @@ KVCC_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 \
 
 ## Day-to-day development
 
-Refresh all branches and rebuild:
+Inside a Ready Pod or a manually prepared workspace:
 
 ```bash
 cd /opt/kvcc-workspace
@@ -197,33 +310,30 @@ bash manifests/scripts/build-all.sh
 bash manifests/scripts/test-all.sh
 ```
 
-Python source packages are editable installs. Python-only changes generally
-need only a worker restart and a test rerun. Re-run `build-all.sh` after native
+Python source packages use editable installs. Python-only changes generally
+need only a worker restart and test rerun. Re-run `build-all.sh` after native
 vLLM, Dynamo Rust, or dependency metadata changes.
 
 ## Manifest repository tests
 
-Run the shell fixture and contract tests from a local checkout:
+Run local fixture and contract tests from a manifest repository checkout:
 
 ```bash
 bash tests/run.sh
 ```
 
 These tests do not download CUDA packages or require GPUs. They validate the
-pod contract, bootstrap behavior, clean-cache dependency resolution, runtime
+Pod contract, bootstrap behavior, clean-cache dependency resolution, runtime
 verification failures, and test orchestration.
 
-## Inspect and clean up
+## Storage and cleanup
 
-Inspect pod state:
+`/opt/kvcc-workspace` uses the Pod’s writable container layer and is
+ephemeral. Deleting the Pod permanently removes synchronized sources, the
+venv, and compiler caches. `/models-shared` is backed by the
+`shared-model-cache` PVC and survives Pod deletion.
 
-```bash
-tsh kubectl -n kvcc-mbench get pod
-tsh kubectl -n kvcc-mbench describe pod kvcc-dev
-```
-
-The workspace is container-local and ephemeral. Deleting the pod permanently
-removes synchronized sources, the venv, model caches, and compiler caches:
+Delete the Pod:
 
 ```bash
 tsh kubectl -n kvcc-mbench delete pod kvcc-dev
@@ -234,3 +344,5 @@ Delete the credential Secret when it is no longer needed:
 ```bash
 tsh kubectl -n kvcc-mbench delete secret kvcc-github-auth
 ```
+
+Do not delete `shared-model-cache` as part of normal cleanup.
