@@ -61,20 +61,24 @@ assert_contains kubernetes/dev-pod.yaml \
   'mountPath:[[:space:]]*/dev/shm'
 assert_contains kubernetes/dev-pod.yaml \
   'name:[[:space:]]*kvcc-github-auth'
-assert_contains kubernetes/dev-pod.yaml \
-  'name:[[:space:]]*repo-installer'
-if [[ "$(grep -Ec 'runAsUser:[[:space:]]*0' kubernetes/dev-pod.yaml)" -lt 2 ]]; then
-  fail 'both repo init container and workspace container run as UID 0'
-else
-  pass 'both repo init container and workspace container run as UID 0'
-fi
-assert_contains kubernetes/dev-pod.yaml \
-  'storageClassName:[[:space:]]*vast'
-assert_contains kubernetes/dev-pod.yaml 'storage:[[:space:]]*200Gi'
 assert_contains kubernetes/dev-pod.yaml 'sizeLimit:[[:space:]]*64Gi'
-assert_contains kubernetes/dev-pod.yaml 'credential\.helper'
-assert_contains kubernetes/dev-pod.yaml 'password=%s'
-assert_contains kubernetes/dev-pod.yaml 'GITHUB_USER.*GITHUB_TOKEN'
+assert_contains kubernetes/dev-pod.yaml 'apt-get install'
+assert_contains kubernetes/dev-pod.yaml 'git-lfs'
+assert_contains kubernetes/dev-pod.yaml '/usr/local/bin/repo'
+assert_contains kubernetes/dev-pod.yaml \
+  'credential\.https://github\.com/\.username'
+assert_contains kubernetes/dev-pod.yaml \
+  'credential\.https://github\.com/\.email'
+assert_contains kubernetes/dev-pod.yaml \
+  'http\.https://github\.com/\.extraHeader'
+assert_contains kubernetes/dev-pod.yaml 'Authorization: Basic'
+assert_contains kubernetes/dev-pod.yaml 'readinessProbe:'
+assert_not_contains kubernetes/dev-pod.yaml 'kind:[[:space:]]*PersistentVolumeClaim'
+assert_not_contains kubernetes/dev-pod.yaml 'kind:[[:space:]]*ConfigMap'
+assert_not_contains kubernetes/dev-pod.yaml 'initContainers:'
+assert_not_contains kubernetes/dev-pod.yaml 'kvcc-pod-tools|kvcc-bin'
+assert_not_contains kubernetes/dev-pod.yaml 'persistentVolumeClaim:'
+assert_not_contains kubernetes/dev-pod.yaml 'credential\.helper'
 assert_not_contains kubernetes/dev-pod.yaml 'ghp_|github_pat_'
 assert_not_contains manifests/develop.xml 'github-ssh|ssh://'
 assert_contains manifests/develop.xml 'revision="cuda-env-fixes"'
@@ -88,7 +92,7 @@ assert_contains scripts/test-all.sh 'test_router_hints\.py'
 assert_contains README.md 'export GITHUB_USER=hxieustc'
 assert_contains README.md 'export GITHUB_EMAIL=.*harryx@nvidia\.com'
 assert_contains README.md 'create secret generic kvcc-github-auth'
-assert_contains README.md '--from-env-file'
+assert_contains README.md '--from-env-file=/dev/stdin'
 assert_contains README.md \
   'tsh kubectl apply -f kubernetes/dev-pod\.yaml'
 assert_contains README.md \
@@ -99,8 +103,9 @@ assert_contains README.md 'bash manifests/scripts/bootstrap\.sh'
 assert_contains README.md 'bash manifests/scripts/build-all\.sh'
 assert_contains README.md 'bash manifests/scripts/test-all\.sh'
 assert_contains README.md 'delete pod kvcc-dev'
-assert_contains README.md 'PVC.*retained|retains.*PVC'
-assert_not_contains README.md 'http\..*\.extraHeader|Authorization: Basic'
+assert_contains README.md 'ephemeral|container-local'
+assert_not_contains README.md 'PVC.*retained|retains.*PVC'
+assert_not_contains README.md 'credential helper|credential-helper'
 
 if [[ "$failures" -ne 0 ]]; then
   printf '\n%d repository contract failure(s)\n' "$failures" >&2

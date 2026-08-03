@@ -38,29 +38,27 @@ export GITHUB_EMAIL="harryx@nvidia.com"
 test -n "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 ```
 
-Create the namespace and a Kubernetes Secret without putting the token on the
-command line or in the pod manifest:
+Create the namespace and pipe the three values directly into a Kubernetes
+Secret. This avoids both a temporary credential file and a token-bearing
+process argument:
 
 ```bash
 tsh kubectl create namespace kvcc-mbench \
   --dry-run=client -o yaml | tsh kubectl apply -f -
 
-AUTH_ENV_FILE="$(mktemp)"
-chmod 600 "$AUTH_ENV_FILE"
-trap 'rm -f "$AUTH_ENV_FILE"' EXIT
 printf 'GITHUB_USER=%s\nGITHUB_EMAIL=%s\nGITHUB_TOKEN=%s\n' \
-  "$GITHUB_USER" "$GITHUB_EMAIL" "$GITHUB_TOKEN" >"$AUTH_ENV_FILE"
-
-tsh kubectl -n kvcc-mbench create secret generic kvcc-github-auth \
-  --from-env-file="$AUTH_ENV_FILE" \
-  --dry-run=client -o yaml | tsh kubectl apply -f -
-
-rm -f "$AUTH_ENV_FILE"
-trap - EXIT
+  "$GITHUB_USER" "$GITHUB_EMAIL" "$GITHUB_TOKEN" | \
+  tsh kubectl -n kvcc-mbench create secret generic kvcc-github-auth \
+    --from-env-file=/dev/stdin \
+    --dry-run=client -o yaml | \
+  tsh kubectl apply -f -
 ```
 
-The pod uses an environment-backed Git credential helper. The token is not
-stored in a Git remote, repository file, or global authorization header.
+The pod reads the Secret into its environment at startup and writes a
+GitHub-scoped Basic authorization header to its ephemeral `/root/.gitconfig`.
+The token is not stored in the pod manifest, a Git remote URL, or a local
+process argument. Anyone who can read the Secret or exec into the pod can
+access the credential.
 
 ## 2. Launch the Dynamo development pod
 
@@ -81,12 +79,12 @@ image:      nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
 arch:       AMD64
 GPU:        2 × NVIDIA B200
 /dev/shm:   64 GiB
-workspace:  200 GiB VAST ReadWriteMany PVC
+workspace:  container-local ephemeral storage
 ```
 
-The init container installs Google's `repo` tool before the main container
-starts. `bootstrap.sh` installs any remaining system build prerequisites, uv,
-and Rust as needed.
+Before the pod becomes Ready, the main container installs Git and Git LFS and
+downloads Google's `repo` tool to `/usr/local/bin/repo`. `bootstrap.sh`
+installs any remaining system build prerequisites, uv, and Rust as needed.
 
 ## 3. Synchronize the repositories
 
@@ -217,28 +215,22 @@ verification failures, and test orchestration.
 
 ## Inspect and clean up
 
-Inspect pod and storage state:
+Inspect pod state:
 
 ```bash
-tsh kubectl -n kvcc-mbench get pod,pvc
+tsh kubectl -n kvcc-mbench get pod
 tsh kubectl -n kvcc-mbench describe pod kvcc-dev
 ```
 
-Delete only the pod after testing:
+The workspace is container-local and ephemeral. Deleting the pod permanently
+removes synchronized sources, the venv, model caches, and compiler caches:
 
 ```bash
 tsh kubectl -n kvcc-mbench delete pod kvcc-dev
 ```
 
-The `kvcc-workspace` PVC is retained, so synchronized sources, the venv, model
-caches, and compiler caches survive the next pod launch.
-
-Delete persistent state only when its loss is intentional:
+Delete the credential Secret when it is no longer needed:
 
 ```bash
-tsh kubectl -n kvcc-mbench delete pvc kvcc-workspace
 tsh kubectl -n kvcc-mbench delete secret kvcc-github-auth
 ```
-
-Deleting the PVC permanently removes the synchronized workspace and its build
-caches.

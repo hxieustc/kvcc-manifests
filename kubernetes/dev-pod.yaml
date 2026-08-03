@@ -4,41 +4,6 @@ metadata:
   name: kvcc-mbench
 ---
 apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kvcc-workspace
-  namespace: kvcc-mbench
-spec:
-  accessModes:
-    - ReadWriteMany
-  storageClassName: vast
-  resources:
-    requests:
-      storage: 200Gi
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kvcc-pod-tools
-  namespace: kvcc-mbench
-data:
-  github-credential-helper.sh: |
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    case "${1:-}" in
-      get)
-        printf 'protocol=https\nhost=github.com\nusername=%s\npassword=%s\n' \
-          "$GITHUB_USER" "$GITHUB_TOKEN"
-        ;;
-      store|erase)
-        ;;
-      *)
-        exit 1
-        ;;
-    esac
----
-apiVersion: v1
 kind: Pod
 metadata:
   name: kvcc-dev
@@ -56,26 +21,6 @@ spec:
   nodeSelector:
     kubernetes.io/arch: amd64
     nvidia.com/gpu.product: NVIDIA-B200
-  securityContext:
-    fsGroup: 0
-  initContainers:
-    - name: repo-installer
-      image: curlimages/curl:8.12.1
-      securityContext:
-        runAsUser: 0
-        runAsGroup: 0
-        allowPrivilegeEscalation: false
-      command:
-        - /bin/sh
-        - -ec
-        - |
-          curl -fsSL \
-            https://storage.googleapis.com/git-repo-downloads/repo \
-            -o /opt/kvcc-bin/repo
-          chmod 0755 /opt/kvcc-bin/repo
-      volumeMounts:
-        - name: kvcc-bin
-          mountPath: /opt/kvcc-bin
   containers:
     - name: workspace
       image: nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
@@ -89,10 +34,33 @@ spec:
         - -lc
         - |
           set -euo pipefail
+
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            --no-install-recommends ca-certificates curl git git-lfs
+          rm -rf /var/lib/apt/lists/*
+
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o /usr/local/bin/repo
+          chmod 0755 /usr/local/bin/repo
+          git lfs install
+
           git config --global user.name "$GITHUB_USER"
           git config --global user.email "$GITHUB_EMAIL"
-          git config --global credential.helper \
-            /opt/kvcc-pod-tools/github-credential-helper.sh
+          git config --global credential.https://github.com/.username \
+            "$GITHUB_USER"
+          git config --global credential.https://github.com/.email \
+            "$GITHUB_EMAIL"
+          github_basic_auth="$(
+            printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64 | tr -d '\n'
+          )"
+          git config --global http.https://github.com/.extraHeader \
+            "Authorization: Basic ${github_basic_auth}"
+          unset github_basic_auth
+
+          mkdir -p "$KVCC_WORKSPACE"
+          touch /tmp/kvcc-tools-ready
           trap : TERM INT
           sleep infinity & wait
       env:
@@ -103,7 +71,7 @@ spec:
         - name: KVCC_WORKSPACE
           value: /opt/kvcc-workspace
         - name: PATH
-          value: /opt/kvcc-bin:/root/.local/bin:/root/.cargo/bin:/opt/uv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          value: /root/.local/bin:/root/.cargo/bin:/opt/uv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
       envFrom:
         - secretRef:
             name: kvcc-github-auth
@@ -118,27 +86,25 @@ spec:
           memory: 256Gi
           ephemeral-storage: 100Gi
           nvidia.com/gpu: "2"
+      readinessProbe:
+        exec:
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              test -f /tmp/kvcc-tools-ready
+              git --version
+              git lfs version
+              /usr/local/bin/repo version
+        periodSeconds: 5
+        timeoutSeconds: 5
+        failureThreshold: 60
       volumeMounts:
-        - name: workspace
-          mountPath: /opt/kvcc-workspace
-        - name: kvcc-bin
-          mountPath: /opt/kvcc-bin
-          readOnly: true
-        - name: kvcc-pod-tools
-          mountPath: /opt/kvcc-pod-tools
-          readOnly: true
         - name: dshm
           mountPath: /dev/shm
+        - name: models-shared
+          mountPath: /models-shared
   volumes:
-    - name: workspace
-      persistentVolumeClaim:
-        claimName: kvcc-workspace
-    - name: kvcc-bin
-      emptyDir: {}
-    - name: kvcc-pod-tools
-      configMap:
-        name: kvcc-pod-tools
-        defaultMode: 0555
     - name: dshm
       emptyDir:
         medium: Memory
