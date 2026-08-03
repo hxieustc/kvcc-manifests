@@ -9,14 +9,12 @@
 -->
 <manifest>
   <remote name="github" fetch="https://github.com" />
-  <!-- github-ssh: used for NVIDIA enterprise repos where classic PATs are blocked -->
-  <remote name="github-ssh" fetch="ssh://git@github.com" />
   <default remote="github" sync-j="8" />
 
   <!-- Manifest repo — synced so scripts/ and locked/ are available in workspace -->
   <project name="hxieustc/kvcc-manifests"
            path="manifests"
-           revision="develop" />
+           revision="cuda-env-fixes" />
 
   <!-- Dynamo runtime and KV router (router_hints branch) -->
   <project name="ai-dynamo/dynamo"
@@ -28,7 +26,7 @@
            path="vllm"
            revision="kvcc_repo" />
 
-  <!-- KVCC secondary-tier functions (SSH: enterprise classic PATs blocked over HTTPS) -->
+  <!-- KVCC secondary-tier functions -->
   <project name="NVIDIA-dev/kvcc"
            path="kvcc"
            revision="main" />

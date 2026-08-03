@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kvcc-mbench
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kvcc-dev
+  namespace: kvcc-mbench
+  labels:
+    app.kubernetes.io/name: kvcc-dev
+    app.kubernetes.io/part-of: kvcc
+spec:
+  restartPolicy: Never
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
+  nodeSelector:
+    kubernetes.io/arch: amd64
+    nvidia.com/gpu.product: NVIDIA-B200
+  containers:
+    - name: workspace
+      image: nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
+      imagePullPolicy: Always
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        allowPrivilegeEscalation: false
+      command:
+        - /bin/bash
+        - -lc
+        - |
+          set -euo pipefail
+
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            --no-install-recommends ca-certificates curl git git-lfs
+          rm -rf /var/lib/apt/lists/*
+
+          curl -fsSL \
+            https://storage.googleapis.com/git-repo-downloads/repo \
+            -o /usr/local/bin/repo
+          chmod 0755 /usr/local/bin/repo
+          git lfs install
+
+          git config --global user.name "$GITHUB_USER"
+          git config --global user.email "$GITHUB_EMAIL"
+          git config --global credential.https://github.com/.username \
+            "$GITHUB_USER"
+          git config --global credential.https://github.com/.email \
+            "$GITHUB_EMAIL"
+          github_basic_auth="$(
+            printf '%s:%s' "$GITHUB_USER" "$GITHUB_TOKEN" | base64 | tr -d '\n'
+          )"
+          git config --global http.https://github.com/.extraHeader \
+            "Authorization: Basic ${github_basic_auth}"
+          unset github_basic_auth
+
+          mkdir -p "$KVCC_WORKSPACE"
+          cd "$KVCC_WORKSPACE"
+
+          echo "==> Synchronizing Dynamo, vLLM, and KVCC"
+          repo init \
+            -u https://github.com/hxieustc/kvcc-manifests.git \
+            -b cuda-env-fixes \
+            -m manifests/develop.xml
+          repo sync -j8
+
+          echo "==> Bootstrapping the build environment"
+          bash manifests/scripts/bootstrap.sh
+
+          echo "==> Building Dynamo, vLLM, and KVCC"
+          bash manifests/scripts/build-all.sh
+
+          echo "==> Running unit, integration, and E2E tests"
+          bash manifests/scripts/test-all.sh
+
+          touch /tmp/kvcc-workflow-ready
+          echo "==> Automated workflow passed; pod is ready for development"
+          trap : TERM INT
+          sleep infinity & wait
+      env:
+        - name: HOME
+          value: /root
+        - name: CUDARC_CUDA_VERSION
+          value: "13000"
+        - name: KVCC_WORKSPACE
+          value: /opt/kvcc-workspace
+        - name: PATH
+          value: /root/.local/bin:/root/.cargo/bin:/opt/uv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      envFrom:
+        - secretRef:
+            name: kvcc-github-auth
+      resources:
+        requests:
+          cpu: "16"
+          memory: 64Gi
+          ephemeral-storage: 20Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "64"
+          memory: 256Gi
+          ephemeral-storage: 100Gi
+          nvidia.com/gpu: "2"
+      readinessProbe:
+        exec:
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              test -f /tmp/kvcc-workflow-ready
+              git --version
+              git lfs version
+              /usr/local/bin/repo version
+        periodSeconds: 5
+        timeoutSeconds: 5
+        failureThreshold: 60
+      volumeMounts:
+        - name: dshm
+          mountPath: /dev/shm
+        - name: models-shared
+          mountPath: /models-shared
+  volumes:
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi
+    - name: models-shared
+      persistentVolumeClaim:
+        claimName: shared-model-cache

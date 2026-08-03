@@ -1,6 +1,7 @@
 # kvcc-manifests
 
-Google Repo manifest repository for KVCC development and tests, which tracks
+Google Repo manifests and scripts for synchronizing, building, and testing
+customized Dynamo, vLLM, and KVCC together. It tracks:
 
 - the [Dynamo](https://github.com/ai-dynamo/dynamo) router,
 - [vLLM](https://github.com/mkhazraee/vllm-priv) KVCC integration branches, and
@@ -15,82 +16,118 @@ kvcc-workspace/
 │   │   ├── bootstrap.sh
 │   │   ├── build-all.sh
 │   │   └── test-all.sh
+│   ├── tests/               ← unit tests for manifests
+│   ├── kubernetes/          ← kubernetes pod manifests
+│   │   └── dev-pod.yaml
 │   └── manifests/
 │       └── develop.xml
 ├── dynamo/                  ← ai-dynamo/dynamo @ oandreeva/router_hints
 ├── vllm/                    ← mkhazraee/vllm-priv @ kvcc_repo
-├── kvcc/                    ← NVIDIA-dev/kvcc @ main (via SSH)
+├── kvcc/                    ← NVIDIA-dev/kvcc @ main
 └── .venv/                   ← created by bootstrap.sh
 ```
 
-## Quick start — full dev cycle from scratch
+It supports **two workflows**:
 
-### 1. Install system tools (skip if already installed)
+1. **local development**: Run Repo and the build/test scripts manually on a compatible Linux host or
+   container, without Kubernetes.
+2. **kubernetes development**: Launch a Kubernetes Pod that runs the complete workflow automatically and
+   remains available for interactive development after all tests pass.
 
-```bash
-# Google repo tool
-mkdir -p ~/.local/bin
-curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.local/bin/repo
-chmod +x ~/.local/bin/repo
-# Make sure ~/.local/bin is on your PATH
-export PATH="$HOME/.local/bin:$PATH"
+Both workflows execute:
 
-# uv (Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Rust toolchain
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-
-# System dev libraries
-sudo apt-get install -y \
-  build-essential libhwloc-dev libudev-dev pkg-config \
-  libclang-dev protobuf-compiler python3-dev cmake git-lfs less git jq curl
+```text
+repo sync → bootstrap.sh → build-all.sh → test-all.sh
 ```
 
-### 2. Create workspace and sync sources
+**What the workflow installs**
 
-1. set up github token access for the private repo `vllm-priv`
+- Python 3.12 in `/opt/kvcc-workspace/.venv`
+- customized Dynamo and its Rust/Python bindings
+- customized vLLM as an editable install using precompiled native artifacts
+- customized KVCC as an editable install
+- torch `2.13.0+cu130` and torchvision `0.28.0+cu130`
+- matching FlashInfer Python, cubin, and `+cu130` JIT-cache packages
 
-The `vllm-priv` repo is a private repo as of now, you can create a GITHUB PAT to access it (provided
-that you already join the repo as a collaborator). 
+`build-all.sh` verifies package versions, CUDA selection, native imports, and
+workspace import provenance before reporting success.
 
-Suppose that you have already created such a GITHUB token, and GITHUB_USER, GITHUB_EMAIL, GITHUB_TOKEN are your GITHUB user, email, and PAT.
-Run the following to set the token for accessing GITHUB:
+## Workflow 1: Local Development (manual execution)
+
+Use this path on a compatible Linux host or an existing container without a
+Pod.
+
+### Prerequisites
+
+- Linux on AMD64 with `apt` and `dpkg`
+- root access when `bootstrap.sh` needs to install missing system packages
+- NVIDIA drivers and at least two visible GPUs for the default E2E test
+- `/models-shared` mounted when shared model data is required
+- network access to GitHub and the configured Python package indexes
+- `GITHUB_USER`, `GITHUB_EMAIL`, and `GITHUB_TOKEN` in the shell environment
+
+### 1. Install Git, Git LFS, curl, and Google Repo:
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y --no-install-recommends \
+  ca-certificates curl git git-lfs
+
+mkdir -p "$HOME/.local/bin"
+curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo \
+  -o "$HOME/.local/bin/repo"
+chmod 0755 "$HOME/.local/bin/repo"
+export PATH="$HOME/.local/bin:$PATH"
+git lfs install
+```
+
+### 2. Configure Git identity and GitHub-scoped HTTPS authorization:
+
+```bash
+git config --global user.name "$GITHUB_USER"
+git config --global user.email "$GITHUB_EMAIL"
+
 git config --global credential.https://github.com/.username "$GITHUB_USER"
 git config --global credential.https://github.com/.email "$GITHUB_EMAIL"
 git config --global http.https://github.com/.extraHeader "Authorization: Basic $(echo -n "$GITHUB_USER:$GITHUB_TOKEN" | base64)"
 ```
 
-2. repo sync from sources
- 
+The authorization header is stored in the user’s global Git configuration.
+Remove it when it is no longer needed:
+
 ```bash
-mkdir kvcc-workspace && cd kvcc-workspace
-repo init -u https://github.com/hxieustc/kvcc-manifests.git -m manifests/develop.xml
+git config --global --unset-all http.https://github.com/.extraHeader
+```
+
+### 3. repo sync from sources
+
+Create the workspace, synchronize all repositories, and run the complete
+workflow:
+
+```bash
+mkdir -p /opt/kvcc-workspace
+cd /opt/kvcc-workspace
+
+repo init -u https://github.com/hxieustc/kvcc-manifests.git \
+  -b cuda-env-fixes \
+  -m manifests/develop.xml
 repo sync -j8
 ```
 
-### 3. Bootstrap the build environment
+### 4. Boostrap the build environment
 
 ```bash
 bash manifests/scripts/bootstrap.sh
 ```
 
-This checks prerequisites, creates `.venv` with Python 3.12, installs
-`maturin`, `pandas`, `pre-commit`, and hooks pre-commit into the vLLM repo.
+This script 
 
-### 4. Build and install Dynamo, vLLM, and KVCC
+- checks and installs prerequisites 
+- creates `.venv` with Python 3.12
+- installs `maturin`, `pandas`, `pre-commit`
+- hooks pre-commit into the vLLM repo
 
-If your CUDA version is **13.0 or newer**, set this before building — the
-`cudarc` Rust crate requires it:
-
-```bash
-export CUDARC_CUDA_VERSION=13000
-```
-
-Then build:
+### 5. Build and install Dynamo, vLLM, and KVCC
 
 ```bash
 bash manifests/scripts/build-all.sh
@@ -106,7 +143,9 @@ Order matters: Dynamo's `[vllm]` extras would
 overwrite the editable vLLM install if built second; KVCC must come after vLLM
 so the `nvidia-kvcc` package lands in the same environment.
 
-### 5. Activate the venv and run tests
+### 6. Activate the venv and run tests
+
+Either manually run invidividual unit/e2e tests:
 
 ```bash
 source .venv/bin/activate
@@ -116,27 +155,239 @@ python -m pytest kvcc/tests/ -q
 python -m pytest vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_config.py \
                  vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py \
                  vllm/tests/v1/kv_offload/tiering/test_kvcc_tier.py -q
+```
 
+or run all tests:
+```bash
 # Full GPU end-to-end test
 bash manifests/scripts/test-all.sh
 ```
 
-### 6. Day-to-day development
+Note: no venv activation is required between scripts; every script explicitly
+targets `/opt/kvcc-workspace/.venv`.
 
-After the initial setup, the typical cycle is:
+## Workflow 2: Fully automated Kubernetes Pod
+
+The Pod installs Git, Git LFS, and Repo, configures GitHub authentication,
+synchronizes all repositories, bootstraps the environment, builds every
+component, and runs all supported tests. It becomes Ready only after the
+complete workflow succeeds, then remains running for interactive development.
+
+If any command fails, `set -euo pipefail` terminates the container. The Pod
+does not become Ready, and the failing stage remains visible in its logs.
+
+### 1. Prepare the namespace and GitHub Secret
+
+Assume that `GITHUB_USER`, `GITHUB_EMAL`, `GITHUB_TOKEN` are all defined in shell environment already.
+
+Create the namespace and pipe the three values into a Kubernetes Secret. This
+avoids a temporary credential file and a token-bearing process argument:
 
 ```bash
-# Pull the latest changes across all repos
+tsh kubectl create namespace kvcc-mbench \
+  --dry-run=client -o yaml | tsh kubectl apply -f -
+
+printf 'GITHUB_USER=%s\nGITHUB_EMAIL=%s\nGITHUB_TOKEN=%s\n' \
+  "$GITHUB_USER" "$GITHUB_EMAIL" "$GITHUB_TOKEN" | \
+  tsh kubectl -n kvcc-mbench create secret generic kvcc-github-auth \
+    --from-env-file=/dev/stdin \
+    --dry-run=client -o yaml | \
+  tsh kubectl apply -f -
+```
+
+The Pod writes a GitHub-scoped Basic authorization header to its ephemeral
+`/root/.gitconfig`. The token is not stored in the Pod manifest, a Git remote
+URL, or a local process argument. Anyone who can read the Secret or exec into
+the Pod can access it.
+
+### 2. (optional) Verify the cluster and persistent model cache
+
+Confirm the Teleport context and the pre-existing shared model PVC:
+
+```bash
+tsh status
+tsh kubectl config current-context
+tsh kubectl -n kvcc-mbench get pvc shared-model-cache
+```
+
+`shared-model-cache` must be Bound. The Pod mounts it at `/models-shared`.
+The manifest does not create or delete this PVC.
+
+### 3. Recreate and launch the Pod
+
+```bash
+tsh kubectl apply -f kubernetes/dev-pod.yaml
+```
+
+Note: optionally delete any previous `kvcc-dev` pod if necessary:
+```bash
+tsh kubectl -n kvcc-mbench delete pod kvcc-dev --ignore-not-found --wait=true
+
+The Pod requests:
+
+```text
+image:          nvcr.io/nvidia/ai-dynamo/vllm-runtime-nightly:latest
+arch:           AMD64
+GPU:            2 × NVIDIA B200
+/dev/shm:       64 GiB memory-backed emptyDir
+workspace:      /opt/kvcc-workspace, container-local and ephemeral
+model storage:  /models-shared, persistent shared-model-cache PVC
+```
+
+### 4. Monitor the automated workflow
+
+Follow installation, synchronization, build, and test output:
+
+```bash
+tsh kubectl -n kvcc-mbench logs -f pod/kvcc-dev
+```
+
+The container remains alive after success, so press Ctrl-C after this message:
+
+```text
+==> Automated workflow passed; pod is ready for development
+```
+
+In another terminal, wait for the final readiness marker:
+
+```bash
+tsh kubectl -n kvcc-mbench wait \
+  --for=condition=Ready pod/kvcc-dev --timeout=8h
+```
+
+If the Pod fails or does not become Ready, inspect the failing stage:
+
+```bash
+tsh kubectl -n kvcc-mbench get pod kvcc-dev
+tsh kubectl -n kvcc-mbench describe pod kvcc-dev
+tsh kubectl -n kvcc-mbench logs pod/kvcc-dev
+```
+
+### 5. Enter the validated development environment
+
+After the Pod is Ready:
+
+```bash
+tsh kubectl -n kvcc-mbench exec -it kvcc-dev -- bash
+cd /opt/kvcc-workspace
+```
+
+The synchronized layout is:
+
+```text
+/opt/kvcc-workspace/
+├── manifests/
+├── dynamo/
+├── vllm/
+├── kvcc/
+└── .venv/
+```
+
+The branch manifest tracks:
+
+- Dynamo `oandreeva/router_hints`
+- vLLM `kvcc_repo`
+- KVCC `main`
+- this manifest repository’s `cuda-env-fixes` branch
+
+For benchmark reproducibility, record an exact lock after a known-green sync:
+
+```bash
+mkdir -p manifests/locked
+repo manifest -r -o manifests/locked/cuda-env-fixes.lock.xml
+```
+
+## Test scope and useful overrides
+
+`test-all.sh` runs:
+
+1. KVCC standalone unit tests.
+2. vLLM/KVCC configuration, harness, and tiering unit tests.
+3. focused Dynamo/vLLM router integration tests.
+4. the two-GPU KVCC E2E test.
+
+DeepGEMM autotuning is skipped for E2E workers because it is unrelated to KVCC
+correctness and can exceed worker startup time. The script verifies requested
+GPU indices before starting E2E.
+
+The following overrides apply to manual script invocations. To use them during
+automated Pod startup, add matching `env` entries to the workspace container.
+
+Run CPU and focused router tests without E2E:
+
+```bash
+KVCC_RUN_E2E=0 bash manifests/scripts/test-all.sh
+```
+
+Select different visible GPU indices:
+
+```bash
+KVCC_TEST_GPUS=2,3 bash manifests/scripts/test-all.sh
+```
+
+Enable vLLM pre-commit hooks:
+
+```bash
+KVCC_INSTALL_PRECOMMIT=1 bash manifests/scripts/bootstrap.sh
+```
+
+Override the runtime matrix only when intentionally testing other packages:
+
+```bash
+KVCC_TORCH_VERSION=2.13.0+cu130 \
+KVCC_TORCHVISION_VERSION=0.28.0+cu130 \
+KVCC_TORCH_INDEX_URL=https://download.pytorch.org/whl/cu130 \
+  bash manifests/scripts/build-all.sh
+```
+
+## Day-to-day development
+
+Inside a Ready Pod or a manually prepared workspace:
+
+```bash
+cd /opt/kvcc-workspace
 repo sync -j8
-
-# Rebuild only the component you changed
-# (Dynamo Rust change)
-cd dynamo/lib/bindings/python && maturin develop --uv && cd -
-# (vLLM Python-only change — editable install, no rebuild needed)
-
-# Run tests
+bash manifests/scripts/bootstrap.sh
+bash manifests/scripts/build-all.sh
 bash manifests/scripts/test-all.sh
 ```
+
+Python source packages use editable installs. Python-only changes generally
+need only a worker restart and test rerun. Re-run `build-all.sh` after native
+vLLM, Dynamo Rust, or dependency metadata changes.
+
+## Manifest repository tests
+
+Run local fixture and contract tests from a manifest repository checkout:
+
+```bash
+bash tests/run.sh
+```
+
+These tests do not download CUDA packages or require GPUs. They validate the
+Pod contract, bootstrap behavior, clean-cache dependency resolution, runtime
+verification failures, and test orchestration.
+
+## Storage and cleanup
+
+`/opt/kvcc-workspace` uses the Pod’s writable container layer and is
+ephemeral. Deleting the Pod permanently removes synchronized sources, the
+venv, and compiler caches. `/models-shared` is backed by the
+`shared-model-cache` PVC and survives Pod deletion.
+
+Delete the Pod:
+
+```bash
+tsh kubectl -n kvcc-mbench delete pod kvcc-dev
+```
+
+Delete the credential Secret when it is no longer needed:
+
+```bash
+tsh kubectl -n kvcc-mbench delete secret kvcc-github-auth
+```
+
+Do not delete `shared-model-cache` as part of normal cleanup.
 
 ---
 
@@ -199,50 +450,5 @@ repo sync -j8
 ```bash
 # Write a snapshot of all current SHAs to locked/
 repo manifest -r -o locked/develop-$(date +%Y.%m.%d).lock.xml
-```
-
----
-
-## Manifests
-
-| File | Purpose |
-|---|---|
-| `default.xml` | Alias — includes `manifests/develop.xml` |
-| `manifests/develop.xml` | Active development branches (dynamo + vllm + kvcc) |
-
-Add new manifests under `manifests/` (e.g. `manifests/release-YYYY.MM.xml`).
-Pin exact SHAs in `locked/` for reproducible builds.
-
-## Scripts
-
-| Script | Purpose |
-|---|---|
-| `manifests/scripts/bootstrap.sh` | Prereq checks, venv creation, build-tool pip installs, pre-commit |
-| `manifests/scripts/build-all.sh` | Build Dynamo (Rust + Python), then vLLM (editable), then KVCC (editable) |
-| `manifests/scripts/test-all.sh` | Run KVCC unit tests, vLLM KVCC tests, and E2E GPU test |
-
-Override GPU indices and E2E toggle via environment variables:
-
-```bash
-KVCC_TEST_GPUS=2,3 KVCC_RUN_E2E=1 bash manifests/scripts/test-all.sh
-```
-
-## Repository layout
-
-**Manifest repo** (`kvcc-manifests`):
-
-```
-kvcc-manifests/
-├── default.xml              ← repo init default (includes manifests/develop.xml)
-├── manifests/
-│   └── develop.xml          ← dynamo + vllm development branches
-├── locked/                  ← pinned-SHA snapshots (add as needed)
-├── scripts/
-│   ├── bootstrap.sh
-│   ├── build-all.sh
-│   └── test-all.sh
-└── .github/
-    └── workflows/
-        └── integration.yml  ← CI (manifest validation + GPU E2E skeleton)
 ```
 

@@ -8,6 +8,9 @@ on:
     paths:
       - "manifests/**"
       - "scripts/**"
+      - "tests/**"
+      - "kubernetes/**"
+      - "README.md"
       - ".github/workflows/**"
   workflow_dispatch:
     inputs:
@@ -23,12 +26,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Check XML is well-formed
         run: |
           for f in manifests/*.xml default.xml; do
             echo "Checking $f"
             xmllint --noout "$f"
           done
+
+      - name: Validate manifest workflow
+        run: bash tests/run.sh
 
   # ---------------------------------------------------------------------------
   # GPU integration test — requires a self-hosted runner with GPUs and
@@ -44,7 +54,10 @@ jobs:
       - name: Sync workspace
         run: |
           MANIFEST="${{ github.event.inputs.manifest || 'manifests/develop.xml' }}"
-          repo init -u git@github.com:hxieustc/kvcc-manifests.git -m "$MANIFEST"
+          repo init \
+            -u https://github.com/hxieustc/kvcc-manifests.git \
+            -b cuda-env-fixes \
+            -m "$MANIFEST"
           repo sync -j4
 
       - name: Bootstrap
