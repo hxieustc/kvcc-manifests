@@ -85,6 +85,7 @@ PY
       "$WORKSPACE_ROOT/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/validate_kvcc_e2e.py" \
       --gpus "$GPUS" \
       --eager-ctrl-connect=true \
+      --partial-submit-load 0.6 \
       -vv -s --log-cli-level=INFO || FAILED=1
   fi
 fi
