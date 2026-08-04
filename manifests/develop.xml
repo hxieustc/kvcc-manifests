@@ -14,7 +14,7 @@
   <!-- Manifest repo — synced so scripts/ and locked/ are available in workspace -->
   <project name="hxieustc/kvcc-manifests"
            path="manifests"
-           revision="cuda-env-fixes" />
+           revision="develop" />
 
   <!-- Dynamo runtime and KV router (router_hints branch) -->
   <project name="ai-dynamo/dynamo"
