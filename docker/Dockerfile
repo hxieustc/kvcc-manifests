@@ -53,7 +53,7 @@ RUN --mount=type=secret,id=github_token,required=true \
  && cd /src/workspace \
  && repo init \
       -u https://github.com/hxieustc/kvcc-manifests.git \
-      -b cuda-env-fixes \
+      -b develop \
       -m manifests/develop.xml \
  && repo sync "-j${REPO_SYNC_JOBS}"
 
@@ -67,6 +67,11 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
  && /venv/bin/pip wheel --no-deps . -w /wheels \
  && ls -la /wheels
 
+RUN rm -rf /src/workspace/.repo \
+ && find /src/workspace -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true \
+ && find /src/workspace -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null || true \
+ && find /src/workspace -name "*.pyc" -o -name "*.pyo" | xargs rm -f 2>/dev/null || true
+
 ############################
 # Stage 2: install Dynamo/KVCC and overlay the base vLLM package
 ############################
@@ -76,7 +81,8 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive \
     VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES=1 \
-    VLLM_USE_DEEP_GEMM=0
+    VLLM_USE_DEEP_GEMM=0 \
+    PYTHONPATH=/opt/kvcc
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
@@ -85,7 +91,8 @@ RUN apt-get update \
       git \
       jq \
       numactl \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && python3 -m pip install --no-cache-dir pandas pytest tblib
 
 RUN FI_VER="$(python3 -c "import importlib.metadata as m; print(m.version('flashinfer-python'))")" \
  && python3 -m pip install --no-cache-dir \
@@ -108,37 +115,60 @@ RUN python3 -m pip install --no-cache-dir \
 
 COPY --from=dynamo-builder /src/workspace/kvcc /src/nvidia-kvcc
 RUN python3 -m pip install --no-cache-dir /src/nvidia-kvcc \
- && python3 -c "import importlib.metadata as m, kvcc; print('nvidia-kvcc OK', m.version('nvidia-kvcc'))"
+ && KVCC_DIR="$(python3 -c "import kvcc, os; print(os.path.dirname(kvcc.__file__))")" \
+ && sed -i 's/^_JOIN_TIMEOUT_SECONDS = .*/_JOIN_TIMEOUT_SECONDS = 60.0/' "${KVCC_DIR}/progress.py" \
+ && grep -q "_JOIN_TIMEOUT_SECONDS = 60.0" "${KVCC_DIR}/progress.py" \
+ && python3 - <<'EOF'
+import importlib.metadata as m
+import kvcc
+
+expected = {"KVCC", "DURATION_METRIC", "STATE_METRIC",
+            "TRANSFER_BLOCKS_METRIC", "TRANSFER_BYTES_METRIC"}
+missing = expected - set(getattr(kvcc, "__all__", []))
+assert not missing, f"kvcc.__all__ is missing {missing}"
+for name in expected:
+    assert hasattr(kvcc, name), f"kvcc.{name} not importable from package root"
+
+print("nvidia-kvcc OK", m.version("nvidia-kvcc"), "| exports:", sorted(expected))
+EOF
 
 COPY --from=dynamo-builder \
-     /src/workspace/vllm/vllm/v1/kv_offload/tiering/kvcc \
-     /overlay/vllm/v1/kv_offload/tiering/kvcc
+     /src/workspace/vllm/vllm/v1/kv_offload/tiering \
+     /overlay/vllm/v1/kv_offload/tiering
 RUN VLLM_DIR="$(python3 -c "import os, vllm; print(os.path.dirname(vllm.__file__))")" \
- && rm -rf "${VLLM_DIR}/v1/kv_offload/tiering/kvcc" \
- && mkdir -p "${VLLM_DIR}/v1/kv_offload/tiering" \
- && cp -a /overlay/vllm/v1/kv_offload/tiering/kvcc \
-      "${VLLM_DIR}/v1/kv_offload/tiering/kvcc" \
+ && rm -rf "${VLLM_DIR}/v1/kv_offload/tiering" \
+ && mkdir -p "${VLLM_DIR}/v1/kv_offload" \
+ && cp -a /overlay/vllm/v1/kv_offload/tiering \
+      "${VLLM_DIR}/v1/kv_offload/tiering" \
  && python3 -m compileall -q "${VLLM_DIR}/v1/kv_offload" \
  && python3 -c "import vllm.v1.kv_offload.tiering.kvcc.manager as m; print('KVCC overlay OK', m.__file__)"
 
-COPY --from=dynamo-builder \
-     /src/workspace/vllm/tests/v1/kv_offload/tiering \
-     /opt/kvcc/vllm-tests/tiering
-COPY --from=dynamo-builder \
-     /src/workspace/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e \
-     /opt/kvcc/vllm-tests/kvcc-e2e
+COPY --from=dynamo-builder /src/workspace/vllm/tests /opt/kvcc/vllm-tests
+RUN sed -i \
+      -e 's/kvcc_progress\.nixl_utils,/kvcc_progress,/' \
+      -e 's/NixlWrapper=lambda \*_: object(),/nixl_agent=lambda *_: object(),/' \
+      /opt/kvcc/vllm-tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_harness.py
+RUN VLLM_PKG="$(python3 -c 'import vllm, os; print(os.path.dirname(vllm.__file__))')" \
+ && ln -sfn /opt/kvcc/vllm-tests /opt/kvcc/tests \
+ && ln -sfn "$VLLM_PKG" /opt/kvcc/vllm \
+ && ln -sfn "$VLLM_PKG" /opt/kvcc/vllm-tests/vllm
+COPY --from=dynamo-builder /src/workspace /src/workspace
 
-RUN python3 - <<'PY'
-import importlib
-import vllm
-
-importlib.import_module("vllm._C_stable_libtorch")
-importlib.import_module("vllm.v1.kv_offload.tiering.kvcc.manager")
-importlib.import_module("dynamo.vllm.router_hints")
-importlib.import_module("kvcc")
-importlib.import_module("nixl")
-print("runtime sanity OK: vllm", vllm.__version__)
-PY
+RUN python3 - <<'EOF'
+import vllm, dynamo, nixl
+from dynamo._core import ModelRuntimeConfig
+rc = ModelRuntimeConfig()
+if hasattr(rc, "kv_control_endpoints"):
+    rc.kv_control_endpoints = {0: "tcp://127.0.0.1:17777"}
+    assert rc.kv_control_endpoints == {0: "tcp://127.0.0.1:17777"}
+    import dynamo.select_service
+    flavor = "change72 (kv_control_endpoints + select_service)"
+else:
+    import dynamo.vllm.router_hints as rh
+    assert callable(rh.enable_router_hint_support)
+    flavor = "mainline router_hints"
+print("sanity OK: vllm", vllm.__version__, "| dynamo", flavor, "| nixl")
+EOF
 
 WORKDIR /opt/kvcc
 ENTRYPOINT []
