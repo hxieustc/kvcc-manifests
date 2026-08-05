@@ -33,8 +33,8 @@ patch files, download a model, install test requirements, or run
 Export the GitHub identity and token in the shell that launches the build:
 
 ```bash
-export GITHUB_USER=hxieustc
-export GITHUB_EMAIL="harryx@nvidia.com"
+export GITHUB_USER=xxx
+export GITHUB_EMAIL="xxx@nvidia.com"
 test -n "${GITHUB_TOKEN:-}"
 ```
 
