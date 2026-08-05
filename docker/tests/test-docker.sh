@@ -3,7 +3,15 @@
 # note:
 # 1. model: the model folder should be mounted
 # 2. shm-size: it needs larger than default shm size
-#
+
+# unit test
+docker run --rm --gpus all \
+  -w /opt/kvcc \
+  kvcc-custom-runtime:dev \
+  python3 -m pytest \
+    tests/v1/kv_offload/tiering/test_kvcc_tier.py
+
+# e2e test
 docker run --rm --gpus all \
   -v /images/models:/images/models \
   --shm-size=8g \
