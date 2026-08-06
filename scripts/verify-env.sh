@@ -15,6 +15,9 @@ echo "==> Checking Python and native-runtime compatibility"
 "$PYTHON" - "$WORKSPACE_ROOT" <<'PY'
 from __future__ import annotations
 
+import sys
+sys.path = sys.path[1:] # strip script dir; nothing here is imported from workspace root
+
 import importlib
 import importlib.metadata as metadata
 import json
