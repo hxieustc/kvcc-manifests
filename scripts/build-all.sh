@@ -113,12 +113,12 @@ if [[ -d "$VLLM_DIR" ]]; then
     # for the vLLM/PyTorch build environment.
     TORCH_CUDA_VERSION="$(
       python - <<'PY' 2>/dev/null || true
-  try:
-      import torch
-      print(torch.version.cuda or "")
-  except Exception:
-      pass
-  PY
+try:
+    import torch
+    print(torch.version.cuda or "")
+except Exception:
+    pass
+PY
     )"
   
     if [[ -n "$TORCH_CUDA_VERSION" ]]; then
@@ -219,6 +219,10 @@ PY
     uv pip install --editable . --torch-backend=auto
   
   uv pip install -r requirements/test/cuda.in
+
+  # fix the decord incompatibility problem
+  uv pip uninstall decord
+  uv pip install --no-cache decord==0.6.0
   
   popd >/dev/null
 
