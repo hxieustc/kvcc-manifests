@@ -82,7 +82,7 @@ PY
   else
     echo "==> KVCC E2E test (GPUs $GPUS)"
     "$PYTHON" -m pytest \
-      "$WORKSPACE_ROOT/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/validate_kvcc_e2e.py" \
+      "$WORKSPACE_ROOT/vllm/tests/v1/kv_offload/kvcc-tests/kvcc-e2e/test_regression_transfer.py" \
       --gpus "$GPUS" \
       --eager-ctrl-connect=true \
       --partial-submit-load 0.6 \
