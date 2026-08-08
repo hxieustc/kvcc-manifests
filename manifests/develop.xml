@@ -19,7 +19,7 @@
   <!-- Dynamo runtime and KV router (router_hints branch) -->
   <project name="ai-dynamo/dynamo"
            path="dynamo"
-           revision="oandreeva/router_hints" />
+           revision="main" />
 
   <!-- vLLM with KVCC secondary-tier interface and kvcc-e2e test -->
   <project name="mkhazraee/vllm-priv"
