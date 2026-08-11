@@ -17,7 +17,7 @@ command -v docker >/dev/null 2>&1 || {
 }
 
 DYNAMO_BUILDER_IMAGE="${DYNAMO_BUILDER_IMAGE:-rust:1.93-bookworm}"
-VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-vllm/vllm-openai:nightly-6f91edf96d3f3272945809c04702380053bff4de@sha256:674c5aa666d38c07a0dc779f8c77a05c2b859617410d16dcdd8a8776166c92b9}"
+VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE:-vllm/vllm-openai:dsv4-megamoe-mxfp4-x86_64-cu130-4ba0a72}"
 KVCC_IMAGE="${KVCC_IMAGE:-kvcc-custom-runtime:dev}"
 KVCC_PLATFORM="${KVCC_PLATFORM:-linux/amd64}"
 REPO_SYNC_JOBS="${REPO_SYNC_JOBS:-8}"
