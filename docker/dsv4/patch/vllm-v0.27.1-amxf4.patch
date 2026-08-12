@@ -1,0 +1,449 @@
+diff --git a/benchmarks/test_prepare_megamoe_mxfp4.py b/benchmarks/test_prepare_megamoe_mxfp4.py
+new file mode 100644
+index 000000000..38a44f5da
+--- /dev/null
++++ b/benchmarks/test_prepare_megamoe_mxfp4.py
+@@ -0,0 +1,112 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Standalone numerical check for the MXFP4 path of prepare_megamoe_inputs.
++
++Compares the Triton input-staging kernel against a PyTorch reference that
++mirrors DeepGEMM's per_token_cast_to_fp4(use_ue8m0=True, gran_k=32,
++use_packed_ue8m0=True). Run with:
++    .venv/bin/python benchmarks/test_prepare_megamoe_mxfp4.py
++"""
++
++import torch
++
++from vllm.models.deepseek_v4.nvidia.ops.prepare_megamoe import prepare_megamoe_inputs
++
++E2M1_VALUES = torch.tensor(
++    [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0], dtype=torch.float32
++)
++
++
++def ceil_to_ue8m0(x: torch.Tensor) -> torch.Tensor:
++    bits = x.abs().float().view(torch.int)
++    exp = ((bits >> 23) & 0xFF) + (bits & 0x7FFFFF).bool().int()
++    return (exp.clamp(1, 254) << 23).view(torch.float)
++
++
++def pack_ue8m0_to_int(x: torch.Tensor) -> torch.Tensor:
++    return (x.view(torch.int) >> 23).to(torch.uint8).view(torch.int)
++
++
++def quantize_to_fp4_e2m1(x: torch.Tensor) -> torch.Tensor:
++    ax = x.abs().clamp_max(6.0)
++    boundaries = torch.tensor(
++        [0.25, 0.75, 1.25, 1.75, 2.5, 3.5, 5.0], device=x.device, dtype=ax.dtype
++    )
++    idx = torch.bucketize(ax, boundaries)
++    code = idx.to(torch.uint8)
++    sign = (x < 0) & (idx != 0)
++    code = code | (sign.to(torch.uint8) << 3)
++    return code.view(torch.int8)
++
++
++def ref_per_token_cast_to_fp4(x: torch.Tensor, gran_k: int = 32):
++    m, n = x.shape
++    x_view = x.float().view(m, -1, gran_k)
++    x_amax = x_view.abs().amax(dim=2).clamp_min(1e-4)
++    sf = ceil_to_ue8m0(x_amax / 6.0)
++    x_scaled = x_view * (1.0 / sf.unsqueeze(2))
++    codes = quantize_to_fp4_e2m1(x_scaled).view(m, n)
++    codes2 = codes.view(m, n // 2, 2)
++    packed = (codes2[:, :, 0] & 0x0F) | ((codes2[:, :, 1] & 0x0F) << 4)
++    return packed.to(torch.int8), pack_ue8m0_to_int(sf)
++
++
++def dequant_packed_fp4(packed: torch.Tensor, sf_int32: torch.Tensor, hidden: int):
++    lut = torch.cat([E2M1_VALUES, -E2M1_VALUES]).to(packed.device)
++    p = packed.to(torch.int32) & 0xFF
++    lo = lut[p & 0xF]
++    hi = lut[(p >> 4) & 0xF]
++    vals = torch.stack([lo, hi], dim=-1).view(packed.shape[0], hidden)
++    # unpack ue8m0: int32 holds 4 group exponents (group=32 cols)
++    exps = sf_int32.view(torch.uint8).to(torch.int32).view(packed.shape[0], -1)
++    scales = (exps.float() - 127.0).exp2()
++    return vals.view(packed.shape[0], -1, 32) * scales.unsqueeze(2)
++
++
++def main():
++    torch.manual_seed(0)
++    device = "cuda"
++    top_k = 8
++    for hidden in (2048, 4096, 7168):
++        num_tokens = 64
++        hs = torch.randn(num_tokens, hidden, dtype=torch.bfloat16, device=device)
++        topk_ids = torch.randint(0, 256, (num_tokens, top_k), device=device)
++        topk_w = torch.rand(num_tokens, top_k, dtype=torch.float32, device=device)
++
++        x_fp4 = torch.empty(num_tokens, hidden // 2, dtype=torch.int8, device=device)
++        x_sf = torch.empty(num_tokens, hidden // 128, dtype=torch.int32, device=device)
++        idx_out = torch.empty(num_tokens, top_k, dtype=torch.int64, device=device)
++        w_out = torch.empty(num_tokens, top_k, dtype=torch.float32, device=device)
++
++        # MXFP4 path is selected by the int8 output buffer dtype.
++        prepare_megamoe_inputs(
++            hs,
++            topk_w,
++            topk_ids,
++            x_fp4,
++            x_sf,
++            idx_out,
++            w_out,
++        )
++
++        ref_packed, ref_sf = ref_per_token_cast_to_fp4(hs, gran_k=32)
++
++        sf_match = torch.equal(x_sf, ref_sf)
++
++        deq_k = dequant_packed_fp4(x_fp4, x_sf, hidden)
++        deq_r = dequant_packed_fp4(ref_packed, ref_sf, hidden)
++        denom = deq_r.abs().mean().clamp_min(1e-6)
++        relerr = (deq_k - deq_r).abs().mean() / denom
++        nib_match = (x_fp4 == ref_packed).float().mean().item()
++
++        print(
++            f"H={hidden}: x_sf exact={sf_match} "
++            f"nibble_match={nib_match:.4f} dequant_relerr={relerr.item():.3e}"
++        )
++        assert sf_match, f"x_sf mismatch at H={hidden}"
++        assert relerr < 5e-3, f"dequant relerr too high at H={hidden}: {relerr}"
++    print("PASS")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/cmake/external_projects/deepgemm.cmake b/cmake/external_projects/deepgemm.cmake
+index be0eccd45..edadcaaf2 100644
+--- a/cmake/external_projects/deepgemm.cmake
++++ b/cmake/external_projects/deepgemm.cmake
+@@ -28,9 +28,8 @@ if(DEEPGEMM_SRC_DIR)
+   message(STATUS "DeepGEMM using local DEEPGEMM_SRC_DIR: ${deepgemm_SOURCE_DIR}")
+ else()
+   # Keep in sync with tools/install_deepgemm.sh
+-  set(_DEEPGEMM_UPSTREAM_REPO "https://github.com/vllm-project/DeepGEMM.git")
+-  # TODO: switch to nv_dev branch after it support situ
+-  set(_DEEPGEMM_UPSTREAM_TAG "e21c821f39a2056d68067a466c64ddc942200106")
++  set(_DEEPGEMM_UPSTREAM_REPO "https://github.com/zyongye/DeepGEMM.git")
++  set(_DEEPGEMM_UPSTREAM_TAG "e1e5123e469eaeaf0aa4115ea97106b35935802a")
+ 
+   set(_deepgemm_fc_root "${FETCHCONTENT_BASE_DIR}")
+   if(NOT _deepgemm_fc_root)
+diff --git a/tools/install_deepgemm.sh b/tools/install_deepgemm.sh
+index 3f80ab567..797887cde 100755
+--- a/tools/install_deepgemm.sh
++++ b/tools/install_deepgemm.sh
+@@ -6,9 +6,8 @@ set -e
+ 
+ # Default values
+ # Keep DEEPGEMM_GIT_REF in sync with cmake/external_projects/deepgemm.cmake
+-DEEPGEMM_GIT_REPO="https://github.com/vllm-project/DeepGEMM.git"
+-# NOTE: This is currently targeting nv-dev branch due to sm120 support
+-DEEPGEMM_GIT_REF="e21c821f39a2056d68067a466c64ddc942200106"
++DEEPGEMM_GIT_REPO="https://github.com/zyongye/DeepGEMM.git"
++DEEPGEMM_GIT_REF="e1e5123e469eaeaf0aa4115ea97106b35935802a"
+ WHEEL_DIR=""
+ 
+ # Parse command line arguments
+diff --git a/vllm/config/kernel.py b/vllm/config/kernel.py
+index 59195f307..ebd649b6b 100644
+--- a/vllm/config/kernel.py
++++ b/vllm/config/kernel.py
+@@ -125,6 +125,7 @@ MoEBackend = Literal[
+     "batched_triton",
+     "deep_gemm",
+     "deep_gemm_mega_moe",
++    "deep_gemm_amxf4_mega_moe",
+     "cutlass",
+     "flashinfer_trtllm",
+     "flashinfer_cutlass",
+@@ -196,7 +197,10 @@ class KernelConfig:
+     - "batched_triton": Use batched Triton experts (moe_mmk) on the batched
+       activation format ([E_local, max_num_tokens, K])
+     - "deep_gemm": Use DeepGEMM kernels (FP8 block-quantized only)
+-    - "deep_gemm_mega_moe": Use DeepGEMM mega MoE kernels
++    - "deep_gemm_mega_moe": Use DeepGEMM mega MoE kernels (fp8 activations)
++    - "deep_gemm_amxf4_mega_moe": Use DeepGEMM mega MoE kernels with MXFP4
++      activations (packed E2M1 dispatch; requires a DeepGEMM build with the
++      MXFP4 mega kernel)
+     - "cutlass": Use vLLM CUTLASS kernels
+     - "flashinfer_trtllm": Use FlashInfer with TRTLLM-GEN kernels
+     - "flashinfer_cutlass": Use FlashInfer with CUTLASS kernels
+diff --git a/vllm/distributed/eplb/eplb_utils.py b/vllm/distributed/eplb/eplb_utils.py
+index dee197497..68e72c490 100644
+--- a/vllm/distributed/eplb/eplb_utils.py
++++ b/vllm/distributed/eplb/eplb_utils.py
+@@ -74,7 +74,7 @@ def override_envs_for_eplb(
+     """
+     is_data_parallel = parallel_config.data_parallel_size > 1
+     is_eplb_enabled = parallel_config.enable_eplb
+-    is_mega_moe = moe_backend == "deep_gemm_mega_moe"
++    is_mega_moe = moe_backend in ("deep_gemm_mega_moe", "deep_gemm_amxf4_mega_moe")
+     is_nccl_based_eplb_communicator = parallel_config.eplb_config.communicator in (
+         "torch_nccl",
+         "pynccl",
+diff --git a/vllm/envs.py b/vllm/envs.py
+index 4587139f1..d6c9a2711 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -188,6 +188,7 @@ if TYPE_CHECKING:
+     VLLM_MOE_USE_DEEP_GEMM: bool = True
+     VLLM_USE_DEEP_GEMM_E8M0: bool = True
+     VLLM_USE_DEEP_GEMM_TMA_ALIGNED_SCALES: bool = True
++    VLLM_DSV4_MEGA_FP8_COMBINE: bool = False
+     VLLM_DCP_Q_REPLICATE: bool = False
+     VLLM_DEEP_GEMM_WARMUP: Literal[
+         "skip",
+@@ -1504,6 +1505,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_USE_DEEP_GEMM_TMA_ALIGNED_SCALES": lambda: bool(
+         int(os.getenv("VLLM_USE_DEEP_GEMM_TMA_ALIGNED_SCALES", "1"))
+     ),
++    # Use FP8 (e4m3 + block-128 UE8M0) combine for the DeepSeek V4 MegaMoE
++    # all-to-all instead of BF16 (output stays BF16). Halves combine NVLink
++    # bytes; composes with either mega activation format.
++    "VLLM_DSV4_MEGA_FP8_COMBINE": lambda: bool(
++        int(os.getenv("VLLM_DSV4_MEGA_FP8_COMBINE", "0"))
++    ),
+     # Opt-in MLA DCP query replication: skip the decode query all-gather.
+     "VLLM_DCP_Q_REPLICATE": lambda: bool(int(os.getenv("VLLM_DCP_Q_REPLICATE", "0"))),
+     # DeepGemm JITs the kernels on-demand. The warmup attempts to make DeepGemm
+diff --git a/vllm/models/deepseek_v4/nvidia/model.py b/vllm/models/deepseek_v4/nvidia/model.py
+index 8925890a3..1ac927786 100644
+--- a/vllm/models/deepseek_v4/nvidia/model.py
++++ b/vllm/models/deepseek_v4/nvidia/model.py
+@@ -166,7 +166,9 @@ def make_deepseek_v4_expert_params_mapping(
+ 
+ 
+ class DeepseekV4MegaMoEExperts(nn.Module):
+-    _symm_buffer_cache: dict[tuple[int, int, int, int, int, int, int], object] = {}
++    _symm_buffer_cache: dict[
++        tuple[int, int, int, int, int, int, int, str, torch.dtype], object
++    ] = {}
+ 
+     def __init__(
+         self,
+@@ -180,6 +182,8 @@ class DeepseekV4MegaMoEExperts(nn.Module):
+         intermediate_size: int,
+         prefix: str = "",
+         num_logical_experts: int | None = None,
++        act_format: str = "fp8",
++        combine_dtype: torch.dtype = torch.bfloat16,
+     ):
+         super().__init__()
+         self.prefix = prefix
+@@ -190,6 +194,10 @@ class DeepseekV4MegaMoEExperts(nn.Module):
+         self.top_k = top_k
+         self.hidden_size = hidden_size
+         self.intermediate_size = intermediate_size
++        # Dispatch activation format for the symmetric buffer: 'fp8' or 'mxfp4'.
++        self.act_format = act_format
++        # Combine all-to-all dtype: bf16 or float8_e4m3fn (FP8 combine).
++        self.combine_dtype = combine_dtype
+         self.max_num_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+ 
+         self.num_logical_experts = (
+@@ -376,6 +384,8 @@ class DeepseekV4MegaMoEExperts(nn.Module):
+             self.top_k,
+             self.hidden_size,
+             self.intermediate_size,
++            self.act_format,
++            self.combine_dtype,
+         )
+         symm_buffer = self._symm_buffer_cache.get(key)
+         if symm_buffer is None:
+@@ -386,6 +396,8 @@ class DeepseekV4MegaMoEExperts(nn.Module):
+                 self.top_k,
+                 self.hidden_size,
+                 self.intermediate_size,
++                act_format=self.act_format,
++                combine_dtype=self.combine_dtype,
+             )
+             self._symm_buffer_cache[key] = symm_buffer
+         return symm_buffer
+@@ -530,8 +542,20 @@ class DeepseekV4MoE(nn.Module):
+         quant_config = vllm_config.quant_config
+         self.prefix = prefix
+         self.use_sequence_parallel = use_sequence_parallel
+-        self.use_mega_moe = (
+-            vllm_config.kernel_config.moe_backend == "deep_gemm_mega_moe"
++        moe_backend = vllm_config.kernel_config.moe_backend
++        self.use_mega_moe = moe_backend in (
++            "deep_gemm_mega_moe",
++            "deep_gemm_amxf4_mega_moe",
++        )
++        # MXFP4 dispatch is selected by the amxf4 backend; fp8 otherwise.
++        self.mega_act_format = (
++            "mxfp4" if moe_backend == "deep_gemm_amxf4_mega_moe" else "fp8"
++        )
++        # FP8 combine is independent of the activation format.
++        self.mega_combine_dtype = (
++            torch.float8_e4m3fn
++            if envs.VLLM_DSV4_MEGA_FP8_COMBINE
++            else torch.bfloat16
+         )
+         if self.use_mega_moe and not vllm_config.parallel_config.enable_expert_parallel:
+             raise NotImplementedError(
+@@ -652,6 +676,8 @@ class DeepseekV4MoE(nn.Module):
+             hidden_size=config.hidden_size,
+             intermediate_size=config.moe_intermediate_size,
+             prefix=f"{prefix}.experts",
++            act_format=self.mega_act_format,
++            combine_dtype=self.mega_combine_dtype,
+         )
+ 
+     def _init_fused_moe_experts(
+@@ -1001,8 +1027,9 @@ class DeepseekV4Model(nn.Module, EagleModelMixin):
+         self.config = config
+         self.quant_config = quant_config
+         self.parallel_config = vllm_config.parallel_config
+-        self.use_mega_moe = (
+-            vllm_config.kernel_config.moe_backend == "deep_gemm_mega_moe"
++        self.use_mega_moe = vllm_config.kernel_config.moe_backend in (
++            "deep_gemm_mega_moe",
++            "deep_gemm_amxf4_mega_moe",
+         )
+         self.use_sequence_parallel = _use_sequence_parallel(vllm_config)
+         if self.use_mega_moe and not vllm_config.parallel_config.enable_expert_parallel:
+diff --git a/vllm/models/deepseek_v4/nvidia/ops/prepare_megamoe.py b/vllm/models/deepseek_v4/nvidia/ops/prepare_megamoe.py
+index dac86be6e..c46289795 100644
+--- a/vllm/models/deepseek_v4/nvidia/ops/prepare_megamoe.py
++++ b/vllm/models/deepseek_v4/nvidia/ops/prepare_megamoe.py
+@@ -2,20 +2,31 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ """Triton input-staging kernel for DeepSeek V4 MegaMoE.
+ 
+-Quantizes hidden states to fp8 with E8M0 group scales and repacks the
++Quantizes hidden states with UE8M0 block-32 group scales and repacks the
+ routing top-k tensors into the int64/float32 layout that the DeepGEMM
+ MegaMoE kernels consume.
++
++The activation format is inferred from the output ``x`` buffer dtype, matching
++the symmetric-buffer contract in DeepGEMM's ``docs/mega_moe_mxfp4.md``:
++
++- float8 buffer (``[num_tokens, hidden]``): per-group fp8 e4m3 (scale / 448).
++- int8 buffer (``[num_tokens, hidden / 2]``): MXFP4, two E2M1 values per byte
++  (low nibble = even col, high nibble = odd col, scale / 6).
++
++The ``x_sf`` scale tensor is identical for both: int32, ``[num_tokens,
++hidden / 128]``, four UE8M0 block-32 exponents packed per int32 (K-major).
+ """
+ 
+ import torch
+ 
++from vllm.models.deepseek_v4.common.ops.fused_indexer_q import _fp32x2_to_fp4x2
+ from vllm.triton_utils import tl, triton
+ 
+ 
+ @triton.jit
+ def _prepare_megamoe_inputs_kernel(
+     hidden_states,
+-    x_fp8,
++    x_q,
+     x_sf,
+     topk_ids,
+     topk_weights,
+@@ -42,6 +53,7 @@ def _prepare_megamoe_inputs_kernel(
+     BLOCK_K: tl.constexpr,
+     GROUP_K: tl.constexpr,
+     BLOCK_TOPK: tl.constexpr,
++    USE_FP4: tl.constexpr,
+ ) -> None:
+     token_id = tl.program_id(0)
+     k_block_id = tl.program_id(1)
+@@ -59,7 +71,9 @@ def _prepare_megamoe_inputs_kernel(
+     amax = tl.max(hidden_groups, axis=1)
+     amax = tl.maximum(amax, 1.0e-4)
+ 
+-    scale = amax / 448.0
++    # MXFP4 E2M1 saturates at 6.0; fp8 e4m3 at 448.0.
++    SCALE_DIVISOR: tl.constexpr = 6.0 if USE_FP4 else 448.0
++    scale = amax / SCALE_DIVISOR
+     scale_bits = scale.to(tl.uint32, bitcast=True)
+     scale_exp = ((scale_bits >> 23) & 0xFF) + ((scale_bits & 0x7FFFFF) != 0).to(
+         tl.uint32
+@@ -70,12 +84,22 @@ def _prepare_megamoe_inputs_kernel(
+     hidden_groups = tl.reshape(hidden, [num_groups, GROUP_K])
+     scaled = hidden_groups * (1.0 / rounded_scale)[:, None]
+     scaled = tl.reshape(scaled, [BLOCK_K])
+-    fp8 = scaled.to(tl.float8e4nv)
+-    tl.store(
+-        x_fp8 + token_id * x_stride_m + k_offsets * x_stride_k,
+-        fp8,
+-        mask=k_mask,
+-    )
++    if USE_FP4:
++        # Pack two E2M1 per byte: low nibble = even col, high nibble = odd col.
++        x_lo, x_hi = tl.split(tl.reshape(scaled, [BLOCK_K // 2, 2]))
++        packed = _fp32x2_to_fp4x2(x_lo, x_hi)
++        half_offsets = k_block_id * (BLOCK_K // 2) + tl.arange(0, BLOCK_K // 2)
++        tl.store(
++            x_q + token_id * x_stride_m + half_offsets * x_stride_k,
++            packed.to(tl.int8, bitcast=True),
++        )
++    else:
++        fp8 = scaled.to(tl.float8e4nv)
++        tl.store(
++            x_q + token_id * x_stride_m + k_offsets * x_stride_k,
++            fp8,
++            mask=k_mask,
++        )
+ 
+     scale_offsets = tl.arange(0, num_groups)
+     packed_scale = tl.sum(scale_exp << (scale_offsets * 8), axis=0).to(tl.int32)
+@@ -126,7 +150,7 @@ def prepare_megamoe_inputs(
+     hidden_states: torch.Tensor,
+     topk_weights: torch.Tensor,
+     topk_ids: torch.Tensor,
+-    x_fp8: torch.Tensor,
++    x_q: torch.Tensor,
+     x_sf: torch.Tensor,
+     topk_idx_out: torch.Tensor,
+     topk_weights_out: torch.Tensor,
+@@ -147,13 +171,25 @@ def prepare_megamoe_inputs(
+             "topk_ids to have the same shape."
+         )
+ 
++    # The activation format is inferred from the output buffer dtype: an int8
++    # buffer carries packed MXFP4 (hidden / 2 wide), anything else is fp8.
++    use_fp4 = x_q.dtype == torch.int8
++    expected_width = hidden_size // 2 if use_fp4 else hidden_size
++    if x_q.shape != (num_tokens, expected_width):
++        raise ValueError(
++            "DeepSeek V4 MegaMoE input staging expected x buffer of shape "
++            f"{(num_tokens, expected_width)} for "
++            f"{'mxfp4' if use_fp4 else 'fp8'} activations, got "
++            f"{tuple(x_q.shape)}."
++        )
++
+     block_k = 128
+     grid = (num_tokens, triton.cdiv(hidden_size, block_k))
+     block_topk = triton.next_power_of_2(top_k)
+     padding_stride_m = is_padding.stride(0) if is_padding is not None else 0
+     _prepare_megamoe_inputs_kernel[grid](
+         hidden_states,
+-        x_fp8,
++        x_q,
+         x_sf,
+         topk_ids,
+         topk_weights,
+@@ -162,8 +198,8 @@ def prepare_megamoe_inputs(
+         topk_weights_out,
+         hidden_states.stride(0),
+         hidden_states.stride(1),
+-        x_fp8.stride(0),
+-        x_fp8.stride(1),
++        x_q.stride(0),
++        x_q.stride(1),
+         x_sf.stride(0),
+         x_sf.stride(1),
+         topk_ids.stride(0),
+@@ -180,5 +216,6 @@ def prepare_megamoe_inputs(
+         BLOCK_K=block_k,
+         GROUP_K=32,
+         BLOCK_TOPK=block_topk,
++        USE_FP4=use_fp4,
+         num_warps=4,
+     )
