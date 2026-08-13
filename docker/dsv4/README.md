@@ -59,7 +59,7 @@ Add separately:
 
 ## Build
 
-ARM64/GB200:
+### ARM64/GB200
 
 ```bash
 cd docker/dsv4
@@ -68,13 +68,42 @@ VLLM_IMAGE=your-registry/vllm-openai:v0.27.1-dsv4-amxf4-arm64-cu130 \
 ./scripts/build-image.sh
 ```
 
-AMD64/B200 or B300:
+### x86_64/B200 or B300
+
+Run the build on a native AMD64 builder. From the repository root, use
+`--load` to retain the result in the builder's local Docker daemon:
+
+```bash
+cd docker/dsv4
+
+VLLM_PLATFORM=linux/amd64 \
+VLLM_IMAGE=vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130 \
+MAX_JOBS="${MAX_JOBS:-$(nproc)}" \
+NVCC_THREADS=8 \
+VLLM_OUTPUT=--load \
+./scripts/build-image.sh
+```
+
+`MAX_JOBS` controls host compilation parallelism; reduce it if the builder is
+memory-constrained. The build script accepts `linux/amd64` explicitly and
+passes it to BuildKit, but `--load` still requires an AMD64 Docker daemon.
+
+To push directly instead of loading the image locally:
 
 ```bash
 VLLM_PLATFORM=linux/amd64 \
 VLLM_IMAGE=your-registry/vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130 \
+MAX_JOBS="${MAX_JOBS:-$(nproc)}" \
+NVCC_THREADS=8 \
+VLLM_OUTPUT=--push \
 ./scripts/build-image.sh
 ```
+
+The x86_64 build follows the same source path as ARM64: the script checks out
+vLLM at the immutable `VLLM_REF`, applies
+`patch/vllm-v0.27.1-amxf4.patch`, verifies the DeepGEMM `e1e5123` pin, and
+builds the `vllm-openai` target from this directory's Dockerfile. It does not
+install a custom wheel on top of a stock vLLM image.
 
 Defaults are:
 
@@ -115,7 +144,7 @@ Check the repository artifacts without building:
 After building on an SM100 host:
 
 ```bash
-VLLM_IMAGE=vllm-openai:v0.27.1-dsv4-amxf4-cu130 \
+VLLM_IMAGE=vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130 \
 ./tests/test-image.sh
 ```
 
@@ -134,7 +163,7 @@ For an optional two-GPU model initialization test:
 ```bash
 MODEL_PATH=/path/to/DeepSeek-V4-Pro \
 MAX_MODEL_LEN=1024 \
-VLLM_IMAGE=vllm-openai:v0.27.1-dsv4-amxf4-cu130 \
+VLLM_IMAGE=vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130 \
 ./tests/test-image.sh
 ```
 
@@ -277,12 +306,12 @@ VLLM_OUTPUT=--push \
 ./docker/dsv4/scripts/build-image.sh
 
 # Resolve the pushed image to an immutable digest before the combined build.
-export VLLM_RUNTIME_IMAGE=your-registry/vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130@sha256:<digest>
+export VLLM_RUNTIME_IMAGE=your-registry/vllm-openai:v0.27.1-dsv4-amxf4-x86_64-cu130@sha256:DIGEST
 export KVCC_IMAGE=your-registry/kvcc:v0.27.1-dsv4-amxf4-x86_64-cu130
 export KVCC_PLATFORM=linux/amd64
-export GITHUB_USER=<github-user>
-export GITHUB_EMAIL=<github-email>
-export GITHUB_TOKEN=<github-token>
+export GITHUB_USER="xxx"
+export GITHUB_EMAIL="xxx@nvidia.com"
+export GITHUB_TOKEN="..."
 ./docker/scripts/build-image.sh
 ```
 
@@ -298,10 +327,12 @@ There are two compatibility requirements for the combined image:
 - The synchronized KVCC tiering adapter copied by the top-level Dockerfile
   must match the vLLM v0.27.1 APIs. If it does not, port that adapter to
   v0.27.1; do not solve the mismatch by replacing the DSV4 vLLM package.
-- The current top-level `docker/Dockerfile` sets `VLLM_USE_DEEP_GEMM=0`.
-  Remove that hard disable for this image or override it with
-  `VLLM_USE_DEEP_GEMM=1` when the container is deployed. Then select
-  `--moe-backend deep_gemm_amxf4_mega_moe` and enable expert parallelism.
+- The top-level `docker/Dockerfile` must retain `VLLM_USE_DEEP_GEMM=1` so it
+  does not disable the integration inherited from the DSV4 vLLM base. This
+  environment setting enables an existing compiled integration; it cannot add
+  the backend to a stock vLLM image. Select
+  `--moe-backend deep_gemm_amxf4_mega_moe` and enable expert parallelism at
+  runtime.
 
 Validation should preserve the same boundary. First run this directory's
 artifact, API, numerical staging, and two-rank symmetric-buffer tests against
