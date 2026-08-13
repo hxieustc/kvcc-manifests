@@ -3,6 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DSV4_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$DSV4_DIR/../.." && pwd)"
 
 required=(
   "$DSV4_DIR/Dockerfile"
@@ -43,5 +44,8 @@ grep -Fq 'e1e5123e469eaeaf0aa4115ea97106b35935802a' "$patch_file"
 grep -Fq 'act_format=self.act_format' "$patch_file"
 grep -Fq 'combine_dtype=self.combine_dtype' "$patch_file"
 grep -Fq 'tools/install_deepgemm.sh' "$patch_file"
+grep -Fq 'VLLM_USE_DEEP_GEMM=1' "$REPO_ROOT/docker/Dockerfile"
+grep -Fq 'uv pip install --system /src/nvidia-kvcc' \
+  "$REPO_ROOT/docker/Dockerfile"
 
 printf 'Artifact validation: PASS\n'

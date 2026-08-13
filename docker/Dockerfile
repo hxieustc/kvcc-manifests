@@ -81,7 +81,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ENV DEBIAN_FRONTEND=noninteractive \
     VLLM_KV_EVENTS_USE_INT_BLOCK_HASHES=1 \
-    VLLM_USE_DEEP_GEMM=0 \
+    VLLM_USE_DEEP_GEMM=1 \
     PYTHONPATH=/opt/kvcc
 
 RUN apt-get update \
@@ -114,7 +114,7 @@ RUN python3 -m pip install --no-cache-dir \
  && python3 -c "from openai.types.responses import NamespaceTool; print('openai floor OK')"
 
 COPY --from=dynamo-builder /src/workspace/kvcc /src/nvidia-kvcc
-RUN python3 -m pip install --no-cache-dir /src/nvidia-kvcc \
+RUN uv pip install --system /src/nvidia-kvcc \
  && KVCC_DIR="$(python3 -c "import kvcc, os; print(os.path.dirname(kvcc.__file__))")" \
  && sed -i 's/^_JOIN_TIMEOUT_SECONDS = .*/_JOIN_TIMEOUT_SECONDS = 60.0/' "${KVCC_DIR}/progress.py" \
  && grep -q "_JOIN_TIMEOUT_SECONDS = 60.0" "${KVCC_DIR}/progress.py" \
